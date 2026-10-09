@@ -117,7 +117,8 @@ Every context is wrapped in one function whose parameters shadow the globals the
 
 - All contexts: `chrome` and `browser`, both pointing to the same runtime object for that context.
 - Background: `self`, `globalThis` and `importScripts`, bound to a background global shim.
-- Popup and options: `window`, `document`, `location`, `localStorage` and `history`, bound to the UI iframe (§6).
+- Popup and options: `window`, `document`, `location` and `history`, bound to the UI iframe (§6).
+- Background, popup and options: `localStorage`, bound to the extension-wide storage shim (§5.1), so settings don't land in each site's own storage.
 
 Inside that wrapper, code goes in one of two ways.
 
@@ -205,6 +206,11 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
   - a core set every conversion uses: the value functions, value listeners and `addElement`;
   - plus the methods `support.ts` lists for each API or manifest feature the analyzer found. For example: `chrome.cookies.*` → `cookie`, a popup → the menu methods, `host_permissions` → `xmlHttpRequest`.
   - Ceiling: an API the analyzer misses (aliasing, §3.4) gets no grant, so its gm method rejects with an error naming the API.
+- **Synchronous APIs on async gm:** `localStorage` in the background, popup and options is the only synchronous extension API backed by GM.
+  - It's a Storage shim over `x2u:<ns>:ls:*` values, loaded into a cache before the context's code starts.
+  - Writes update the cache immediately and go to `gm.setValue`. Other tabs' caches follow through value listeners.
+  - Content scripts keep the page's real `localStorage`, as in a real extension.
+  - Ceiling: code that writes `window.localStorage` explicitly still reaches the site's storage. Upgrade path: a `window` proxy, if the benchmark shows it matters.
 - **CI:** the emulator (§10.2) provides exactly the `GM_*` functions in the grant table, so CI runs the real `gm.ts`.
 
 ### 5.2 API support table (v1)
