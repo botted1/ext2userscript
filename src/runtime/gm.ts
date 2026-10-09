@@ -114,7 +114,7 @@ export function readManagerApi(): GmApi {
     GM_addElement: typeof GM_addElement === "function" ? GM_addElement : undefined,
     GM_openInTab: typeof GM_openInTab === "function" ? GM_openInTab : undefined,
     GM_notification: typeof GM_notification === "function" ? GM_notification : undefined,
-    GM_cookie: typeof GM_cookie === "object" && GM_cookie !== null ? GM_cookie : undefined,
+    GM_cookie: ((typeof GM_cookie === "object" && GM_cookie !== null) || typeof GM_cookie === "function") ? GM_cookie : undefined,
     GM_info: typeof GM_info === "object" && GM_info !== null ? GM_info : undefined,
   };
 }
@@ -193,7 +193,7 @@ export function createGm(api: GmApi = readManagerApi()): Gm {
     caps: {
       valueListeners: typeof api.GM_addValueChangeListener === "function",
       menus: typeof api.GM_registerMenuCommand === "function",
-      cookies: typeof api.GM_cookie === "object" && api.GM_cookie !== null,
+      cookies: (typeof api.GM_cookie === "object" && api.GM_cookie !== null) || typeof api.GM_cookie === "function",
     },
     handler: api.GM_info?.scriptHandler ?? "unknown",
     getValue: <T>(key: string, fallback?: T) => now(() => need("GM_getValue")(key, fallback) as T | undefined),
@@ -211,8 +211,23 @@ export function createGm(api: GmApi = readManagerApi()): Gm {
     xmlHttpRequest: (request) =>
       new Promise<GmXhrResponse>((resolve, reject) => {
         const send = need("GM_xmlhttpRequest"); // the executor runs synchronously, so the GM call happens before return
-        if (request.signal?.aborted) return reject(abortError());
-        const control = send({
+        const signal = request.signal;
+        if (signal?.aborted) return reject(abortError());
+        let control: { abort(): void } | undefined;
+        let settled = false;
+        // Every settlement goes through here, so the abort listener never outlives its request on a shared signal.
+        const settle = (action: () => void) => {
+          settled = true;
+          signal?.removeEventListener("abort", onAbort);
+          action();
+        };
+        // Rejects by itself, so an abort settles the request even if the manager's abort() never calls onabort.
+        const onAbort = () =>
+          settle(() => {
+            control?.abort();
+            reject(abortError());
+          });
+        control = send({
           method: request.method ?? "GET",
           url: request.url,
           headers: request.headers,
@@ -220,12 +235,13 @@ export function createGm(api: GmApi = readManagerApi()): Gm {
           responseType: request.responseType ?? "text",
           timeout: request.timeout,
           anonymous: request.anonymous,
-          onload: (r) => resolve({ status: r.status, statusText: r.statusText, finalUrl: r.finalUrl, responseHeaders: r.responseHeaders, response: r.response }),
-          onerror: () => reject(new TypeError(`ext2userscript: request to ${request.url} failed`)),
-          ontimeout: () => reject(new DOMException(`ext2userscript: request to ${request.url} timed out`, "TimeoutError")),
-          onabort: () => reject(abortError()),
+          onload: (r) => settle(() => resolve({ status: r.status, statusText: r.statusText, finalUrl: r.finalUrl, responseHeaders: r.responseHeaders, response: r.response })),
+          onerror: () => settle(() => reject(new TypeError(`ext2userscript: request to ${request.url} failed`))),
+          ontimeout: () => settle(() => reject(new DOMException(`ext2userscript: request to ${request.url} timed out`, "TimeoutError"))),
+          onabort: () => settle(() => reject(abortError())),
         });
-        request.signal?.addEventListener("abort", () => control.abort(), { once: true });
+        // Added after send, so a request that settles during send, or whose send throws, never gets a listener.
+        if (!settled) signal?.addEventListener("abort", onAbort);
       }),
     addElement: (parent, tag, attributes = {}) =>
       now(() => (parent ? need("GM_addElement")(parent, tag, attributes) : need("GM_addElement")(tag, attributes))),

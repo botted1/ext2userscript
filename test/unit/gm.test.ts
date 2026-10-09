@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import {
   CORE_METHODS,
   createGm,
@@ -146,6 +147,31 @@ describe("createGm", () => {
     assert.deepEqual(aborted, ["https://x/slow"]);
   });
 
+  it("removes its abort listener from a shared signal when a request settles", async () => {
+    const signal = new AbortController().signal;
+    const gm = createGm({
+      GM_xmlhttpRequest: (d) => {
+        queueMicrotask(() => (d.url.endsWith("/fail")
+          ? d.onerror({})
+          : d.onload({ status: 200, statusText: "OK", finalUrl: d.url, responseHeaders: "", response: "" })));
+        return { abort() {} };
+      },
+    });
+    await gm.xmlHttpRequest({ url: "https://x/ok", signal });
+    assert.equal(getEventListeners(signal, "abort").length, 0);
+    await assert.rejects(gm.xmlHttpRequest({ url: "https://x/fail", signal }), TypeError);
+    assert.equal(getEventListeners(signal, "abort").length, 0);
+  });
+
+  it("rejects an aborted request even when the manager's abort() never calls onabort", async () => {
+    const gm = createGm({ GM_xmlhttpRequest: () => ({ abort() {} }) });
+    const controller = new AbortController();
+    const pending = gm.xmlHttpRequest({ url: "https://x/hang", signal: controller.signal });
+    controller.abort();
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("still pending after 100 ms")), 100));
+    await assert.rejects(Promise.race([pending, timeout]), { name: "AbortError" });
+  });
+
   it("addElement passes the parent only when given one", async () => {
     const calls: unknown[][] = [];
     const gm = createGm({ GM_addElement: (...args: unknown[]) => { calls.push(args); return {} as Element; } });
@@ -206,6 +232,21 @@ describe("createGm", () => {
     } finally {
       delete scope.GM_getValue;
       delete scope.GM_info;
+    }
+  });
+
+  it("caps.cookies is true when GM_cookie is callable with list, set and delete", () => {
+    const gm = createGm({ GM_cookie: Object.assign(() => {}, { list() {}, set() {}, delete() {} }) });
+    assert.equal(gm.caps.cookies, true);
+  });
+
+  it("readManagerApi keeps a callable GM_cookie", () => {
+    const scope = globalThis as Record<string, unknown>;
+    scope.GM_cookie = Object.assign(() => {}, { list() {}, set() {}, delete() {} });
+    try {
+      assert.equal(createGm(readManagerApi()).caps.cookies, true);
+    } finally {
+      delete scope.GM_cookie;
     }
   });
 });
