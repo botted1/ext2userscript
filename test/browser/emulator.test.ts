@@ -2,7 +2,8 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { installEmulator, type Emulator } from "../../bench/emulator/index.ts";
-import { readAttr, waitForAttr } from "../support/dom.ts";
+import { GRANTS } from "../../src/runtime/gm.ts";
+import { readAttr, waitForAttr, waitForJson } from "../support/dom.ts";
 import { startServer, type Server } from "../support/server.ts";
 import { renderMeta, type MetaInput } from "../support/userscript.ts";
 
@@ -55,9 +56,46 @@ describe("CI emulator", () => {
       const a = await context.newPage();
       await a.goto(`${site.origin}/a.html`);
       await waitForAttr(b, "data-change", JSON.stringify({ newValue: { n: 1 }, remote: true }));
+      // b has the change, so Node has already sent it to every frame it sends it to. The evaluate() below uses the same
+      // channel as any echo to a, so it returns only after an echo has landed. a's listener must still show just its own
+      // local event: a write is not echoed back to the page that made it.
+      await a.evaluate(() => 0);
+      assert.equal(await readAttr(a, "data-change"), JSON.stringify({ newValue: { n: 1 }, remote: false }));
       const c = await context.newPage();
       await c.goto(`${other.origin}/b.html`);
       await waitForAttr(c, "data-initial", JSON.stringify({ n: 1 }));
+    });
+  });
+
+  // A page that reloads while another keeps writing has frames with no document. Writes aimed at them wait for the next
+  // document, whose snapshot may already hold them. Each counter value must reach the reader once, in order.
+  it("does not deliver a write that the reloaded page's snapshot already holds", async () => {
+    const body = `
+      if (location.pathname === "/a.html") {
+        let n = 0;
+        setInterval(() => GM_setValue("counter", ++n), 2);
+      } else {
+        GM_addValueChangeListener("counter", (key, oldValue, newValue, remote) => window.__record(JSON.stringify({ oldValue, newValue, remote })));
+      }
+    `;
+    await withScript({ grant: ["GM_setValue", "GM_addValueChangeListener"] }, body, async (context) => {
+      const events: Array<{ oldValue?: number; newValue: number; remote: boolean }> = [];
+      await context.exposeFunction("__record", (json: string) => {
+        events.push(JSON.parse(json));
+      });
+      const writer = await context.newPage();
+      await writer.goto(`${site.origin}/a.html`);
+      const reader = await context.newPage();
+      await reader.goto(`${other.origin}/b.html`);
+      // About 0.8s in all. The pause lets each document receive some writes of its own between the reloads.
+      for (let reload = 0; reload < 40; reload++) {
+        await reader.reload();
+        await reader.waitForTimeout(10);
+      }
+
+      assert.ok(events.length >= 20, `only ${events.length} writes reached the reader, so this proves nothing`);
+      const bad = events.filter((event) => !event.remote || event.newValue <= (event.oldValue ?? 0));
+      assert.deepEqual(bad.slice(0, 5), [], `${bad.length} of ${events.length} deliveries repeated or went back to an earlier value`);
     });
   });
 
@@ -91,20 +129,82 @@ describe("CI emulator", () => {
     });
   });
 
-  it("GM_xmlhttpRequest skips CORS but enforces @connect", async () => {
+  it("provides every function in gm.ts's grant table", async () => {
+    const names = Object.values(GRANTS).flat();
+    const body = `document.documentElement.setAttribute("data-types", JSON.stringify({ ${names.map((name) => `${name}: typeof ${name}`).join(", ")} }));`;
+    await withScript({ grant: names }, body, async (context) => {
+      const page = await context.newPage();
+      await page.goto(`${site.origin}/a.html`);
+      const types = await waitForJson<Record<string, string>>(page, "data-types");
+      const missing = names.filter((name) => types[name] !== "function" && types[name] !== "object");
+      assert.deepEqual(missing, [], `granted but not provided by the emulator: ${missing.join(", ")}`);
+    });
+  });
+
+  it("GM_xmlhttpRequest skips CORS", async () => {
     const body = `
       const root = document.documentElement;
-      if (location.pathname === "/b.html") GM_xmlhttpRequest({ url: "${site.origin}/echo", method: "POST", data: "hi", responseType: "json",
-        onload: (r) => root.setAttribute("data-xhr", r.response.body), onerror: () => root.setAttribute("data-xhr", "error") });
-      if (location.pathname === "/a.html") GM_xmlhttpRequest({ url: "http://blocked.example/",
-        onload: () => root.setAttribute("data-xhr", "loaded"), onerror: () => root.setAttribute("data-xhr", "blocked") });
+      GM_xmlhttpRequest({ url: "${site.origin}/echo", method: "POST", data: "hi", responseType: "json",
+        onload: (r) => root.setAttribute("data-xhr", r.response.body), onerror: (r) => root.setAttribute("data-xhr", "error: " + r.error) });
     `;
     await withScript({ grant: ["GM_xmlhttpRequest"], connect: ["127.0.0.1"] }, body, async (context) => {
       const page = await context.newPage();
       await page.goto(`${other.origin}/b.html`);
       await waitForAttr(page, "data-xhr", "hi");
+    });
+  });
+
+  // A page on 127.0.0.1 asks for localhost: a different host that is just as reachable, so only @connect decides.
+  // The denial is told apart from a network failure by its message.
+  it("GM_xmlhttpRequest enforces @connect for other hosts", async () => {
+    const body = `
+      const root = document.documentElement;
+      GM_xmlhttpRequest({ url: "http://localhost:${site.port}/echo", method: "POST", data: "hi", responseType: "json",
+        onload: (r) => root.setAttribute("data-xhr", r.response.body), onerror: (r) => root.setAttribute("data-xhr", "error: " + r.error) });
+    `;
+    const denied = "error: @connect does not allow localhost";
+    const cases: Array<[connect: string[], expected: string]> = [
+      [[], denied],
+      [["127.0.0.1"], denied],
+      [["localhost"], "hi"],
+      [["*"], "hi"],
+    ];
+    for (const [connect, expected] of cases) {
+      await withScript({ grant: ["GM_xmlhttpRequest"], connect }, body, async (context) => {
+        const page = await context.newPage();
+        await page.goto(`${site.origin}/a.html`);
+        await waitForAttr(page, "data-xhr", expected);
+      });
+    }
+  });
+
+  it("GM_xmlhttpRequest sends a URLSearchParams body as form text", async () => {
+    const body = `
+      const root = document.documentElement;
+      GM_xmlhttpRequest({ url: "${site.origin}/echo", method: "POST", data: new URLSearchParams({ a: "1", b: "x y" }), responseType: "json",
+        onload: (r) => root.setAttribute("data-form", r.response.body), onerror: (r) => root.setAttribute("data-form", "error: " + r.error) });
+    `;
+    await withScript({ grant: ["GM_xmlhttpRequest"] }, body, async (context) => {
+      const page = await context.newPage();
       await page.goto(`${site.origin}/a.html`);
-      await waitForAttr(page, "data-xhr", "blocked");
+      await waitForAttr(page, "data-form", "a=1&b=x+y");
+    });
+  });
+
+  it("GM_xmlhttpRequest throws for a body it cannot send instead of dropping it", async () => {
+    const body = `
+      const root = document.documentElement;
+      try {
+        GM_xmlhttpRequest({ url: "${site.origin}/echo", method: "POST", data: new ArrayBuffer(4), onload() {}, onerror() {} });
+        root.setAttribute("data-thrown", "no throw");
+      } catch (error) {
+        root.setAttribute("data-thrown", error.name + ": " + error.message);
+      }
+    `;
+    await withScript({ grant: ["GM_xmlhttpRequest"] }, body, async (context) => {
+      const page = await context.newPage();
+      await page.goto(`${site.origin}/a.html`);
+      assert.equal(await readAttr(page, "data-thrown"), "TypeError: emulator: GM_xmlhttpRequest data of type ArrayBuffer is not supported");
     });
   });
 

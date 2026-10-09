@@ -22,7 +22,8 @@ type Bridge = {
 
 /** Hooks the Node side calls with frame.evaluate. */
 export type Hooks = {
-  apply(key: string, value: unknown): void;
+  /** A change made elsewhere, with the hub's revision of it. Changes the snapshot already holds are ignored. */
+  apply(key: string, value: unknown, rev: number): void;
   clickMenu(caption: string): boolean;
   menu(): string[];
   notifications: Array<{ text: string; title?: string }>;
@@ -47,7 +48,8 @@ type XhrDetails = {
 export function boot(meta: Meta, run: (api: Record<string, unknown>) => void): void {
   if (!urlMatches(location.href, meta.match) || urlMatches(location.href, meta.excludeMatch)) return;
   const win = window as unknown as Bridge & { __x2uEmu?: Hooks };
-  const values = createValueStore(readSnapshot(), (key, value) => {
+  const snapshot = readSnapshot();
+  const values = createValueStore(snapshot.values, (key, value) => {
     void win.__x2uEmuSet(key, value);
   });
   const menu = new Map<string, { caption: string; onClick: () => void }>();
@@ -56,7 +58,10 @@ export function boot(meta: Meta, run: (api: Record<string, unknown>) => void): v
   let nextMenuId = 1;
 
   win.__x2uEmu = {
-    apply: (key, value) => values.applyRemote(key, value),
+    // A change sent while this frame was between documents arrives after the new document took its snapshot.
+    apply: (key, value, rev) => {
+      if (rev > snapshot.rev) values.applyRemote(key, value);
+    },
     clickMenu: (caption) => {
       for (const command of menu.values()) {
         if (command.caption === caption) {
@@ -130,15 +135,27 @@ function whenParsed(fn: () => void): void {
   else fn();
 }
 
-/** Synchronous, so GM_getValue sees stored values from the userscript's first line. index.ts routes this URL. */
-function readSnapshot(): Record<string, unknown> {
+/**
+ * Synchronous, so GM_getValue sees stored values from the userscript's first line. index.ts routes this URL and
+ * stamps the values with the revision of the latest write they include.
+ */
+function readSnapshot(): { rev: number; values: Record<string, unknown> } {
   const request = new XMLHttpRequest();
   request.open("GET", "/__x2u_emu__/snapshot", false);
   request.send();
-  return request.status === 200 ? (JSON.parse(request.responseText) as Record<string, unknown>) : {};
+  return request.status === 200 ? (JSON.parse(request.responseText) as { rev: number; values: Record<string, unknown> }) : { rev: 0, values: {} };
+}
+
+/** Strings go as they are and URLSearchParams as form text. Any other body would be lost silently, so it throws. */
+function xhrBody(data: unknown): string | undefined {
+  if (data === undefined || typeof data === "string") return data;
+  if (data instanceof URLSearchParams) return data.toString();
+  const type = data === null ? "null" : ((data as { constructor?: { name?: string } }).constructor?.name ?? typeof data);
+  throw new TypeError(`emulator: GM_xmlhttpRequest data of type ${type} is not supported`);
 }
 
 function xhr(win: Bridge, meta: Meta, details: XhrDetails): { abort(): void } {
+  const data = xhrBody(details.data);
   let settled = false;
   const settle = (fn: () => void) => {
     if (settled) return;
@@ -151,7 +168,7 @@ function xhr(win: Bridge, meta: Meta, details: XhrDetails): { abort(): void } {
     queueMicrotask(() => settle(() => details.onerror?.({ status: 0, error: `@connect does not allow ${url.hostname}` })));
     return { abort() {} };
   }
-  const request = { method: details.method ?? "GET", url: url.href, headers: details.headers ?? {}, data: typeof details.data === "string" ? details.data : undefined, timeout: details.timeout };
+  const request = { method: details.method ?? "GET", url: url.href, headers: details.headers ?? {}, data, timeout: details.timeout };
   void win.__x2uEmuXhr(request).then((result) => {
     if ("error" in result) {
       settle(() => (result.error === "timeout" ? details.ontimeout?.({}) : details.onerror?.({ status: 0, error: result.error })));

@@ -16,6 +16,14 @@ export type Emulator = {
 
 type HookWindow = { __x2uEmu?: Hooks };
 
+/** Playwright's wording when the page, frame or context went away while a call to it was in flight. */
+const TARGET_GONE = /target (page, context or browser )?(has been )?closed|frame (was|got) detached|execution context was destroyed/i;
+
+/** For calls into pages that may be closing or navigating: that is expected, anything else is a bug worth seeing. */
+const ignoreGone = (error: unknown): void => {
+  if (!TARGET_GONE.test(String(error))) console.error("[x2u emulator]", error);
+};
+
 let pageBundle: Promise<string> | undefined;
 function bundlePage(): Promise<string> {
   pageBundle ??= build({
@@ -35,16 +43,20 @@ export async function installEmulator(context: BrowserContext, userscript: strin
   const store = new Map<string, unknown>();
   const tabs = new Map<number, Page>();
   let nextTabId = 1;
+  // Counts the writes to the store. A snapshot carries the revision of the last write it includes, and every change sent
+  // to a page carries its own, so a page can tell a change its snapshot already holds from a newer one.
+  let rev = 0;
 
-  await context.route("**/__x2u_emu__/snapshot", (route) => route.fulfill({ json: Object.fromEntries(store) }));
+  await context.route("**/__x2u_emu__/snapshot", (route) => route.fulfill({ json: { rev, values: Object.fromEntries(store) } }));
 
   await context.exposeBinding("__x2uEmuSet", async ({ frame }, key: string, value: unknown) => {
+    const written = ++rev;
     if (value === undefined) store.delete(key);
     else store.set(key, value);
     for (const page of context.pages()) {
       for (const other of page.frames()) {
         if (other === frame) continue;
-        other.evaluate(([k, v]) => (window as unknown as HookWindow).__x2uEmu?.apply(k, v), [key, value] as const).catch(() => {});
+        other.evaluate(([k, v, r]) => (window as unknown as HookWindow).__x2uEmu?.apply(k, v, r), [key, value, written] as const).catch(ignoreGone);
       }
     }
   });
@@ -71,9 +83,9 @@ export async function installEmulator(context: BrowserContext, userscript: strin
     const page = await context.newPage();
     tabs.set(id, page);
     page.on("close", () => {
-      frame.evaluate((tabId) => (window as unknown as HookWindow).__x2uEmu?.tabClosed(tabId), id).catch(() => {});
+      frame.evaluate((tabId) => (window as unknown as HookWindow).__x2uEmu?.tabClosed(tabId), id).catch(ignoreGone);
     });
-    page.goto(url).catch(() => {});
+    page.goto(url).catch(ignoreGone);
     return id;
   });
 

@@ -35,6 +35,50 @@ describe("createValueStore", () => {
     store.GM_setValue("k", 2);
     assert.equal(calls, 1);
   });
+
+  it("publishes a write made by a listener after the write that triggered it", () => {
+    const published: Array<[string, unknown]> = [];
+    const store = createValueStore({}, (key, value) => published.push([key, value]));
+    store.GM_addValueChangeListener("k", (key, oldValue, newValue) => {
+      if (newValue === 1) store.GM_setValue("k", 2);
+    });
+    store.GM_setValue("k", 1);
+    assert.deepEqual(published, [["k", 1], ["k", 2]]);
+    assert.equal(store.GM_getValue("k"), 2);
+  });
+
+  it("publishes a write made by a listener after the delete that triggered it", () => {
+    const published: Array<[string, unknown]> = [];
+    const store = createValueStore({ k: 0 }, (key, value) => published.push([key, value]));
+    store.GM_addValueChangeListener("k", (key, oldValue, newValue) => {
+      if (newValue === undefined) store.GM_setValue("k", 9);
+    });
+    store.GM_deleteValue("k");
+    assert.deepEqual(published, [["k", undefined], ["k", 9]]);
+    assert.equal(store.GM_getValue("k"), 9);
+  });
+
+  it("keeps writing, publishing and notifying when a listener throws", () => {
+    const published: Array<[string, unknown]> = [];
+    const errors: unknown[] = [];
+    const store = createValueStore({}, (key, value) => published.push([key, value]), (error) => errors.push(error));
+    const boom = new Error("boom");
+    const seen: unknown[] = [];
+    store.GM_addValueChangeListener("k", () => {
+      throw boom;
+    });
+    store.GM_addValueChangeListener("k", (key, oldValue, newValue) => seen.push(newValue));
+
+    assert.doesNotThrow(() => store.GM_setValue("k", 1));
+    assert.deepEqual(published, [["k", 1]]);
+    assert.deepEqual(seen, [1]);
+    assert.deepEqual(errors, [boom]);
+    assert.equal(store.GM_getValue("k"), 1);
+
+    assert.doesNotThrow(() => store.applyRemote("k", 2), "a remote change is isolated the same way");
+    assert.deepEqual(seen, [1, 2]);
+    assert.deepEqual(errors, [boom, boom]);
+  });
 });
 
 describe("parseMeta", () => {

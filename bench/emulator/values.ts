@@ -15,31 +15,44 @@ export type ValueStore = {
 
 const copy = (value: unknown): unknown => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
-export function createValueStore(initial: Record<string, unknown>, publish: (key: string, value: unknown) => void): ValueStore {
+/** A listener's error must not undo or block the write, so it goes to the page's error handler from a microtask instead. */
+const rethrowLater = (error: unknown): void => queueMicrotask(() => {
+  throw error;
+});
+
+export function createValueStore(
+  initial: Record<string, unknown>,
+  publish: (key: string, value: unknown) => void,
+  reportError: (error: unknown) => void = rethrowLater,
+): ValueStore {
   const cache = new Map<string, unknown>(Object.entries(initial));
   const listeners = new Map<string, { key: string; fn: ValueListener }>();
   let nextId = 1;
 
+  /**
+   * Updates the copy, publishes a local write, then tells the listeners. Publishing first keeps a write that a
+   * listener makes in reply behind the one that triggered it, so the other pages and the hub end on the newer value.
+   */
   const change = (key: string, value: unknown, remote: boolean) => {
     const oldValue = cache.get(key);
     if (value === undefined) cache.delete(key);
     else cache.set(key, value);
+    if (!remote) publish(key, value);
     for (const listener of [...listeners.values()]) {
-      if (listener.key === key) listener.fn(key, copy(oldValue), copy(value), remote);
+      if (listener.key !== key) continue;
+      try {
+        listener.fn(key, copy(oldValue), copy(value), remote);
+      } catch (error) {
+        reportError(error);
+      }
     }
   };
 
   return {
     GM_getValue: (key, fallback) => (cache.has(key) ? copy(cache.get(key)) : fallback),
-    GM_setValue: (key, value) => {
-      const stored = copy(value);
-      change(key, stored, false);
-      publish(key, stored);
-    },
+    GM_setValue: (key, value) => change(key, copy(value), false),
     GM_deleteValue: (key) => {
-      if (!cache.has(key)) return;
-      change(key, undefined, false);
-      publish(key, undefined);
+      if (cache.has(key)) change(key, undefined, false);
     },
     GM_listValues: () => [...cache.keys()],
     GM_addValueChangeListener: (key, fn) => {
