@@ -1,7 +1,7 @@
 # ext2userscript — design
 
 Date: 2026-10-09
-Status: draft, awaiting review
+Status: reviewed 2026-10-09; GM-layer revision applied
 
 ## 1. Goal
 
@@ -18,10 +18,11 @@ A public, open-source converter that turns a browser extension (Chrome or Firefo
 | Topic | Decision |
 |---|---|
 | Audience | Public open-source tool, general purpose |
-| Target managers (v1) | Tampermonkey + Violentmonkey only. ScriptCat, Safari apps and Greasemonkey 4 are out of scope for v1. |
+| Target managers (v1) | Tampermonkey + Violentmonkey only. Other managers are on the Later list below. |
 | Delivery | One conversion core shared by a static web app (conversion runs in the browser, nothing is uploaded) and an npm CLI |
 | Approach | Build-time bundling (esbuild) plus a separately tested runtime. No `with` wrapper, no runtime `eval` of extension code. |
-| Benchmark | Two tiers: a GM emulator in CI, plus real TM/VM before each release |
+| GM access | Every GM call goes through `src/runtime/gm.ts` (§5.1): async-only, three capability flags (`valueListeners`, `menus`, `cookies`), a TM/VM implementation only, no fallback code yet. `@grant` lines are generated from it, and the CI emulator stands in for TM/VM behind it. |
+| Benchmark | Two tiers: the emulator behind `gm.ts` in CI, plus real TM/VM before each release |
 | Name | `ext2userscript` (npm package, CLI command, repo folder) |
 | Language / licence | TypeScript, MIT |
 
@@ -31,6 +32,10 @@ A public, open-source converter that turns a browser extension (Chrome or Firefo
 - `chrome_url_overrides` (new tab and similar), devtools panels, `chrome://` pages.
 - `identity`, `offscreen`, `sidePanel`, `tabCapture`, `debugger`, `nativeMessaging`.
 - Running background code while no matching tab is open.
+
+### Later
+
+- Other userscript managers (Safari Userscripts, Stay, ScriptCat, Greasemonkey 4, etc.) via another `gm.ts` implementation plus per-manager header rules in `metadata.ts`, selected with `--target`.
 
 ## 2. Repository layout
 
@@ -49,8 +54,9 @@ ext2userscript/
       metadata.ts       # userscript header
       emit.ts           # final assembly
       esbuild.ts        # picks esbuild (Node) or esbuild-wasm (browser)
-    runtime/            # chrome.* implemented on GM_* (built to a string at build time)
+    runtime/            # chrome.* implemented on gm.ts (built to a string at build time)
       index.ts
+      gm.ts             # the only file that calls GM_*: async interface, caps, grant table, TM/VM implementation
       bus.ts            # in-tab + cross-tab messaging
       lease.ts          # background leader election
       tabs.ts storage.ts alarms.ts menus.ts ui.ts net.ts i18n.ts scripting.ts ...
@@ -61,7 +67,7 @@ ext2userscript/
   bench/
     corpus.json         # pinned cases
     cases/<id>.ts       # per-extension Playwright assertions
-    emulator/           # GM API emulator (CI tier)
+    emulator/           # stands in for TM/VM behind gm.ts (CI tier)
     run.ts              # runs corpus for ext2userscript and the baseline, prints scorecard
   test/                 # node:test unit tests + Playwright runtime tests
 ```
@@ -130,8 +136,8 @@ Inside that wrapper, code goes in one of two ways.
 ### 3.4 Analyze
 - Scan each bundle for member chains rooted at `chrome` or `browser`, such as `chrome.tabs.query`.
 - Use a tokenizer-level scan rather than a full AST walk. The ceiling: aliasing like `const c = chrome; c.tabs.query()` is missed. If that proves common, upgrade to an acorn walk.
-- Look up each chain in `support.ts`, which maps an API to `supported | partial(reason) | unsupported(reason)`.
-- Manifest keys also produce entries, for example `chrome_url_overrides` → unsupported and `background.persistent: true` → partial.
+- Look up each chain in `support.ts`, which maps an API to `supported | partial(reason) | unsupported(reason)` and to the gm methods it needs (§5.1).
+- Manifest features also produce entries, for example `chrome_url_overrides` → unsupported and `background.persistent: true` → partial. Supported features such as a popup, an options page or `host_permissions` get entries too, because they decide grants (§5.1).
 
 ### 3.5 Report
 ```ts
@@ -176,7 +182,7 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 | earliest `run_at` | `@run-at` |
 | no group with `all_frames: true` | `@noframes` |
 | isolated world | `@inject-into content` (VM), `@sandbox DOM` (TM). Spike S1 verifies GM_* stays available. |
-| GM functions referenced by the runtime features in use | `@grant` (minimal set) |
+| gm methods this conversion needs (§5.1) | One `@grant` per `GM_*` function those methods call, read from `gm.ts`'s grant table. `metadata.ts` hardcodes no GM names. |
 
 Per-group matching is done again at runtime, because the header is the union of all groups. This includes excludes and globs, which the baseline ignored.
 
@@ -184,69 +190,86 @@ Per-group matching is done again at runtime, because the header is the union of 
 
 Built from `src/runtime` into one minified string, which the converter embeds with the bundles. Each context gets its own `chrome` object, created by `createChrome(context)`.
 
-### 5.1 API support table (v1)
+### 5.1 GM layer (`src/runtime/gm.ts`)
+Every GM call goes through this one file. No other runtime file names a `GM_*` function.
+
+- **Async-only interface:** `getValue`, `setValue`, `deleteValue`, `listValues`, `addValueChangeListener`, `removeValueChangeListener`, `registerMenuCommand`, `unregisterMenuCommand`, `xmlHttpRequest`, `addElement`, `openInTab`, `notification`, and `cookie` (list, set, delete). Every method returns a Promise.
+- **Capability flags:** `caps = { valueListeners, menus, cookies }`, detected at startup from which functions exist. On TM and VM, `valueListeners` and `menus` are true; `cookies` is true on TM only.
+- **One implementation, for TM and VM:** it wraps the synchronous `GM_*` functions that both managers provide. Each method makes its underlying call before its first `await`, so only the result is async. That keeps two timings intact: the lease release written during `pagehide` (§5.4), and page-world scripts injected at `document_start` (§5.5).
+- **No fallback code yet:**
+  - `cookies` false (VM): `chrome.cookies.*` rejects (§9).
+  - `menus` false: anything that needs a menu entry rejects the same way.
+  - `valueListeners` false (never on TM/VM): the runtime logs one error naming the detected manager (`GM_info.scriptHandler`) and saying v1 supports Tampermonkey and Violentmonkey, then stops.
+  - Fallbacks come with support for other managers (§1, Later).
+- **Grant table:** `gm.ts` exports, as plain data, the `GM_*` functions each method calls. `metadata.ts` emits `@grant` for:
+  - a core set every conversion uses: the value functions, value listeners and `addElement`;
+  - plus the methods `support.ts` lists for each API or manifest feature the analyzer found. For example: `chrome.cookies.*` → `cookie`, a popup → the menu methods, `host_permissions` → `xmlHttpRequest`.
+  - Ceiling: an API the analyzer misses (aliasing, §3.4) gets no grant, so its gm method rejects with an error naming the API.
+- **CI:** the emulator (§10.2) provides exactly the `GM_*` functions in the grant table, so CI runs the real `gm.ts`.
+
+### 5.2 API support table (v1)
 
 | API | Status | Implementation |
 |---|---|---|
 | `storage.local` / `sync` / `session` | supported | One GM value per key under `x2u:<ns>:s:<area>:<key>`. `session` is cleared when the lease is first taken in a fresh browser session (no live tabs seen for over 10s). |
-| `storage.onChanged`, `storage.<area>.onChanged` | supported | `GM_addValueChangeListener` on the keys, which works across tabs |
-| `runtime.sendMessage` / `onMessage` / `connect` / `onConnect` / `Port` | supported | §5.2 |
+| `storage.onChanged`, `storage.<area>.onChanged` | supported | `gm.addValueChangeListener` on the keys, which works across tabs |
+| `runtime.sendMessage` / `onMessage` / `connect` / `onConnect` / `Port` | supported | §5.3 |
 | `runtime.getURL`, `getManifest`, `id`, `lastError`, `onInstalled`, `onStartup`, `openOptionsPage`, `getPlatformInfo` | supported | `onInstalled` fires once per installed version (tracked in GM storage) |
 | `runtime.onMessageExternal`, `sendNativeMessage` | unsupported | |
-| `tabs.query` / `get` / `getCurrent` / `sendMessage` / `create` / `update(url)` / `remove` / `reload` | supported | Tab registry (§5.3). `remove` and `update` work by messaging the target tab, which calls `window.close()` or sets `location`. `close` only works for tabs opened by the script; otherwise the report says partial. |
+| `tabs.query` / `get` / `getCurrent` / `sendMessage` / `create` / `update(url)` / `remove` / `reload` | supported | Tab registry (§5.3). `create` uses `gm.openInTab`. `remove` and `update` work by messaging the target tab, which calls `window.close()` or sets `location`. `close` only works for tabs opened by the script; otherwise the report says partial. |
 | `tabs.onUpdated` / `onRemoved` / `onCreated` / `onActivated` | supported | Derived from registry changes. `onActivated` uses `visibilitychange`. |
 | `windows.*` | partial | One synthetic window (id 1) |
 | `scripting.executeScript` (`func` or `files`) / `insertCSS` / `removeCSS` | supported | Run in the target tab via the bus |
 | `tabs.executeScript` / `insertCSS` (MV2) | supported | Same path as above |
 | `alarms.*` | supported | Persisted schedule; fired by the background leader |
-| `contextMenus` / `menus` | partial | Each item becomes `GM_registerMenuCommand`. `onClicked` receives `{menuItemId, pageUrl}` but no selection or link context. |
+| `contextMenus` / `menus` | partial | Each item becomes a `gm.registerMenuCommand` entry. `onClicked` receives `{menuItemId, pageUrl}` but no selection or link context. |
 | `action` / `browserAction` / `pageAction` `.onClicked`, `openPopup` | supported | Menu command "Open <name>" |
 | `action.setBadgeText` / `setIcon` / `setTitle` | partial | Stored; shown in the popup modal title. No toolbar UI exists. |
 | `commands.onCommand` + manifest `commands` | supported | `keydown` listener on each tab, mapping suggested keys per platform |
-| `notifications.create` / `clear` / `onClicked` | supported | `GM_notification` |
+| `notifications.create` / `clear` / `onClicked` | supported | `gm.notification` |
 | `i18n.getMessage` / `getUILanguage` / `detectLanguage` | supported / supported / unsupported | |
 | `permissions.contains` / `getAll` / `request` / `remove` | partial | Answers come from the manifest. `request` resolves true, and removals persist in GM storage. |
-| `cookies.*` | partial | `GM_cookie` (TM only). On VM: unsupported at runtime, flagged in the report. |
+| `cookies.*` | partial | `gm.cookie`, which needs `caps.cookies`, so TM only. On VM the calls reject (§5.1), and the report flags it. |
 | `extension.getBackgroundPage`, `runtime.getBackgroundPage` | partial | Works only when the current tab is the leader; otherwise rejects |
 | `webRequest`, `declarativeNetRequest`, `proxy`, `identity`, `offscreen`, `sidePanel`, `devtools`, `debugger`, `tabCapture`, `downloads` | unsupported | Reject with `Error("ext2userscript: chrome.X is not available in userscripts")`, logged once |
 
-Network: `fetch` and `XMLHttpRequest` in the background and content contexts are shimmed, so that cross-origin requests to `host_permissions` hosts go through `GM_xmlhttpRequest`. Same-origin requests use the native implementation. Responses support `text`, `json`, `blob` and `arrayBuffer`. Streaming bodies are a known ceiling: they are buffered.
+Network: `fetch` and `XMLHttpRequest` in the background and content contexts are shimmed, so that cross-origin requests to `host_permissions` hosts go through `gm.xmlHttpRequest`. Same-origin requests use the native implementation. Responses support `text`, `json`, `blob` and `arrayBuffer`. Streaming bodies are a known ceiling: they are buffered.
 
-### 5.2 Messaging
+### 5.3 Messaging
 - **In-tab:** content ↔ popup/options ↔ background (when this tab is the leader) is delivered directly through an in-memory bus with structured clone semantics (`structuredClone`).
 - **Cross-tab:** single-writer outbox keys, so concurrent writes never lose messages:
   - Each tab writes only `x2u:<ns>:out:<tabId>`, which holds a ring buffer of its last 64 messages `{seq, to, payload}`.
-  - Each tab listens (via `GM_addValueChangeListener`) to the outbox keys of every other live tab, and tracks the last `seq` it has read per sender.
-- **Discovery:** each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, ts}` every 2s. `GM_listValues()` is polled every 2s to find tab keys. A tab whose `ts` is older than 6s counts as gone, which fires `tabs.onRemoved`, and its keys are deleted.
+  - Each tab listens (via `gm.addValueChangeListener`) to the outbox keys of every other live tab, and tracks the last `seq` it has read per sender.
+- **Discovery:** each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, ts}` every 2s. `gm.listValues()` is polled every 2s to find tab keys. A tab whose `ts` is older than 6s counts as gone, which fires `tabs.onRemoved`, and its keys are deleted.
 - **Responses:** a response (`sendResponse` or a returned promise) is just another message with `replyTo`. The default timeout is 30s, after which `lastError` is set to "The message port closed before a response was received."
-- **Tab id:** a random 31-bit integer per tab, kept across same-origin navigations through `sessionStorage`. The ceiling: a cross-origin navigation in the same tab gets a new id, appearing as remove plus create. Upgrade path: `GM_getTab` where available (TM).
+- **Tab id:** a random 31-bit integer per tab, kept across same-origin navigations through `sessionStorage`. The ceiling: a cross-origin navigation in the same tab gets a new id, appearing as remove plus create. Upgrade path: a `gm.getTab` method backed by TM's `GM_getTab`.
 
-### 5.3 Background leader
+### 5.4 Background leader
 - **Lease:** stored at `x2u:<ns>:lease` as `{holder, exp}`. This is the only key with multiple writers.
 - **Every 2s, each tab:**
   - If the lease is missing or `exp < now`, it writes `{holder: me, exp: now + 6000}`, waits 300ms and re-reads. If `holder === me`, it becomes the leader.
   - The leader renews every 2s.
   - On each renewal the leader re-reads first. If `holder !== me`, it steps down: it stops dispatching messages, alarms and events to background listeners. Timers already started by background code keep running; the ceiling here is that background timers are not cancelled.
-- **Handover:** on `pagehide`, the leader writes `exp: 0` so another tab takes over immediately.
+- **Handover:** on `pagehide`, the leader writes `exp: 0` so another tab takes over immediately. This is best effort: the write is issued synchronously (§5.1), and if it doesn't land, the lease still expires within 6s.
 - **New leader:**
   - It runs the background bundle from the top.
-  - It fires `runtime.onStartup` only for the first leader of a browser session. A browser session starts when a lease is taken and no tab key has a heartbeat newer than 10s; this is the same definition that clears `storage.session` in §5.1.
+  - It fires `runtime.onStartup` only for the first leader of a browser session. A browser session starts when a lease is taken and no tab key has a heartbeat newer than 10s; this is the same definition that clears `storage.session` in §5.2.
   - It fires `onInstalled` once per version.
 - **What survives a handover:** storage only. This matches MV3 service-worker semantics. MV2 extensions with `persistent: true` are reported as partial.
 
-### 5.4 Content scripts
+### 5.5 Content scripts
 - At startup the tab evaluates each content group's `matches`, `exclude_matches`, `include_globs` and `exclude_globs` against `location.href`.
-- Matching groups run in `run_at` order: CSS first, then JS.
+- Matching groups run in `run_at` order: CSS first (through `gm.addElement('style')`, which the page's CSP doesn't block), then JS.
 - `all_frames: false` groups don't run in iframes. If no group needs frames, the header has `@noframes`.
-- `world: "MAIN"` groups, and the common pattern of appending `<script src=runtime.getURL("x.js")>`, run in the page context through `GM_addElement('script', {textContent})`:
-  - The runtime patches `Node.prototype.appendChild`, `insertBefore`, `append` and `prepend` in the content context. When one of them inserts a `<script>` whose `src` is one of our asset blob URLs, it swaps in `GM_addElement`.
+- `world: "MAIN"` groups, and the common pattern of appending `<script src=runtime.getURL("x.js")>`, run in the page context through `gm.addElement('script', {textContent})`:
+  - The runtime patches `Node.prototype.appendChild`, `insertBefore`, `append` and `prepend` in the content context. When one of them inserts a `<script>` whose `src` is one of our asset blob URLs, it swaps in `gm.addElement`.
   - Page-context scripts get no `chrome` object, which matches how real extensions behave.
 
 ## 6. Popup and options pages
 - **Opening:** "Open <name>" and "<name> options" menu commands (plus `action.onClicked`, `runtime.openOptionsPage` and `action.openPopup`) open a modal. The modal lives in a closed shadow root and contains a same-origin `about:blank` iframe.
 - **Filling the iframe:**
   - The page's HTML is parsed with `DOMParser` and its body and head nodes are imported into the iframe document.
-  - `<link rel=stylesheet>` and `<style>` become `GM_addElement(iframeDoc.head, 'style', {textContent})`, which gets past CSP rules that block inline styles.
+  - `<link rel=stylesheet>` and `<style>` become `gm.addElement(iframeDoc.head, 'style', {textContent})`, which gets past CSP rules that block inline styles.
   - Assets are rewritten to blob URLs.
 - **Scripts:** the page's scripts are not inserted as `<script>` elements. The bundled UI code runs inside the userscript, with its wrapper parameters bound to the iframe's `window`/`document`, and the page's CSP doesn't apply to it. `DOMContentLoaded` and `load` are dispatched to the iframe's window after insertion.
 - **Size:** the popup modal sizes itself to the content (max 800×600). The options page opens as a larger modal.
@@ -285,7 +308,7 @@ ext2userscript report <source>          # analyse only, no output script
 
 ## 9. Error handling
 - **Conversion:** hard errors only for an unreadable archive, a missing or invalid `manifest.json`, or an esbuild failure the plugin can't recover from (the message names the file and line). Everything else becomes a report entry.
-- **Runtime:** unsupported calls reject, or call back with `lastError` set, using an error that names the API. Each one is logged once per page. No silent no-ops for APIs that change behaviour.
+- **Runtime:** unsupported calls reject, or call back with `lastError` set, using an error that names the API. Each one is logged once per page. No silent no-ops for APIs that change behaviour. A capability flag that is off (§5.1) makes the APIs that depend on it fail the same way.
 - **Runtime boot:** one `try/catch` per content group and per background start, so one failing group doesn't stop the others. Errors are prefixed `[ext2userscript:<name>]`.
 
 ## 10. Testing and benchmark
@@ -294,7 +317,7 @@ ext2userscript report <source>          # analyse only, no output script
 Unpack (crx2/crx3 fixtures), manifest normalisation (MV2 and MV3 fixtures, locales), metadata mapping (§4 table), analyze plus the support table, and the asset rewriting.
 
 ### 10.2 Runtime (Playwright, Chromium)
-- A **GM emulator** (`bench/emulator`) implements the GM functions we use, with a shared store across pages in one browser context. Value-change listeners fire across pages with `remote: true`.
+- An **emulator** (`bench/emulator`) stands in for TM/VM behind `gm.ts`. It provides exactly the `GM_*` functions in the grant table (a unit test fails if one is missing), so CI runs the real `gm.ts`. Values are shared across all pages in one browser context using the managers' consistency model: each page reads a synchronous local copy, and writes reach other pages asynchronously, firing their value-change listeners with `remote: true`.
 - Playwright injects it through `context.addInitScript` before the converted script. The emulator also enforces `@match`/`@exclude-match` and `@run-at`, the way a manager does.
 - Tests cover:
   - storage plus `onChanged` across two pages;
@@ -305,7 +328,7 @@ Unpack (crx2/crx3 fixtures), manifest normalisation (MV2 and MV3 fixtures, local
   - content-group matching with excludes and globs.
 
 ### 10.3 Conformance
-- One suite of GM-semantics tests runs against the emulator in CI, and against real TM and VM in the release tier. This keeps the emulator from drifting from the real managers.
+- One suite tests the `gm.ts` contract through the real `gm.ts`: values, value listeners (including changes from other tabs), menus, `addElement` timing, `xmlHttpRequest`, and `cookie` where `caps.cookies` is true. It runs against the emulator in CI and against real TM and VM in the release tier, which keeps the emulator from drifting from the real managers.
 
 ### 10.4 Benchmark corpus (`bench/corpus.json`)
 Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`legacy`, `modern` or `negative`) and a `cases/<id>.ts` assertion script. Archives are downloaded and cached under `bench/.cache/` (git-ignored); third-party binaries are never committed.
@@ -325,8 +348,8 @@ Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`l
 
 | # | Question | Pass condition |
 |---|---|---|
-| S1 | With `@sandbox DOM` (TM) and `@inject-into content` (VM), are the GM functions we need (`GM_addValueChangeListener`, `GM_listValues`, `GM_addElement`, `GM_xmlhttpRequest`, `GM_registerMenuCommand`) still available, and are content scripts isolated from page globals? | All available in both managers; page globals are not visible |
-| S2 | Popup modal on strict-CSP sites (GitHub, YouTube, X): do the `about:blank` iframe plus userscript-context JS plus `GM_addElement` styles work, and which asset types fail? | JS runs and styles apply on all three. Failing asset types are recorded as report warnings. |
+| S1 | With `@sandbox DOM` (TM) and `@inject-into content` (VM): is every `GM_*` function in `gm.ts`'s grant table still available, does `gm.addElement` run a page-world script synchronously, and are content scripts isolated from page globals? | All available in both managers; an injected script runs before the next page script; page globals are not visible |
+| S2 | Popup modal on strict-CSP sites (GitHub, YouTube, X): do the `about:blank` iframe plus userscript-context JS plus `gm.addElement` styles work, and which asset types fail? | JS runs and styles apply on all three. Failing asset types are recorded as report warnings. |
 | S3 | Can `esbuild-wasm`, with the virtual-fs plugin, bundle a real MV3 module service worker (LeetCode Enhancer's WXT build) inside a Web Worker in current Chrome, Firefox and Safari? | The bundle is byte-identical to native esbuild's output; the first conversion takes under 10s on a laptop |
 | S4 | Lease and outbox protocol under churn in real TM and VM (not just the emulator) | No double leader after settling; no lost messages over 1,000 sends |
 
@@ -334,7 +357,7 @@ If a spike fails, its section of this spec is revised before implementation cont
 
 ## 12. Risks
 
-- **GM API behaviour differs between TM and VM** (value-listener timing, `GM_addElement` targets). Mitigation: the conformance suite (§10.3) plus spikes S1 and S4.
+- **GM API behaviour differs between TM and VM** (value-listener timing, `GM_addElement` targets). Mitigation: all differences are contained in `gm.ts`, which the conformance suite (§10.3) and spikes S1 and S4 test in both managers.
 - **esbuild-wasm size (~10 MB).** Mitigation: lazy load plus Web Worker. If too slow on mobile, the web app shows a CLI hint.
 - **Store download endpoints are unofficial** (CWS, Edge) and may change. Mitigation: kept in one file (`download.ts`); a CI smoke test downloads one pinned extension per store weekly.
 - **Licensing of converted extensions.** The README states that users are responsible for complying with each extension's licence. The benchmark never redistributes binaries.
