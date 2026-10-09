@@ -32,6 +32,7 @@ async function afterParse() {
     results.caps = gm.caps;
     results.handler = gm.handler;
     results.pageSawSync = html.getAttribute("data-page-saw-sync");
+    results.pageSawWorld = html.getAttribute("data-page-saw-world");
     results.pageGlobalVisible = "pageGlobal" in window;
 
     const key = `conf:${token}:value`;

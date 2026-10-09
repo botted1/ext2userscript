@@ -20,6 +20,7 @@ type SingleResult = {
   addElementResolved?: boolean;
   addElementError?: string;
   pageSawSync?: string;
+  pageSawWorld?: string | null;
   pageGlobalVisible?: boolean;
   roundtrip?: boolean;
   listed?: boolean;
@@ -44,7 +45,7 @@ for (const backend of backendsFromEnv()) {
     before(async () => {
       site = await startServer({
         "/conformance.html": page(
-          `<script>document.documentElement.setAttribute("data-page-saw-sync", document.documentElement.getAttribute("data-x2u-sync") ?? "no"); window.pageGlobal = "page";</script>`,
+          `<script>document.documentElement.setAttribute("data-page-saw-sync", document.documentElement.getAttribute("data-x2u-sync") ?? "no"); document.documentElement.setAttribute("data-page-saw-world", String(window.__x2uPageWorld)); window.pageGlobal = "page";</script>`,
         ),
         "/reader.html": page(),
         "/opened.html": page(),
@@ -85,6 +86,7 @@ for (const backend of backendsFromEnv()) {
         assert.equal(r.addElementSync, true, "gm.addElement must run a page-world script synchronously");
         assert.equal(r.addElementResolved, true, r.addElementError);
         assert.equal(r.pageSawSync, "1", "a script injected at document-start must run before the page's own scripts");
+        assert.equal(r.pageSawWorld, "1", "the script gm.addElement injects must run in the page's own world");
         assert.equal(r.pageGlobalVisible, backend === "emulator", "content scripts must not see page globals (the emulator runs in the page world)");
         assert.equal(r.roundtrip, true);
         assert.equal(r.listed, true);
