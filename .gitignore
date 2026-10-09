@@ -1,0 +1,4 @@
+node_modules/
+bench/.cache/
+dist/
+.claude/worktrees/
