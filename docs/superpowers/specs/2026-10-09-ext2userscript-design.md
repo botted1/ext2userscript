@@ -47,16 +47,22 @@ ext2userscript/
       index.ts          # convert(files, options) → { userscript, report }
       unpack.ts         # zip / xpi / crx2 / crx3 → Map<path, Uint8Array>
       manifest.ts       # normalise MV2/MV3 → Model; locale resolution
-      bundle.ts         # context wrappers, classic-script concat, esbuild + virtual-fs plugin for modules
+      bundle.ts         # context wrappers, classic-script concat; ES modules go through esbuild.ts
       analyze.ts        # chrome.*/browser.* usage scan → report entries
       support.ts        # the API support table (single source of truth)
       assets.ts         # asset table (inlined files)
       metadata.ts       # userscript header
       emit.ts           # final assembly
-      esbuild.ts        # picks esbuild (Node) or esbuild-wasm (browser)
+      esbuild.ts        # ES-module bundling with a virtual-fs plugin; takes the esbuild API as a parameter
+      esbuild-node.ts   # loads native esbuild (CLI)
+      esbuild-browser.ts # loads esbuild-wasm (web app worker); callers pick one of the two loaders
+      paths.ts          # POSIX path helpers that also run in the browser
     runtime/            # chrome.* implemented on gm.ts (built to a string at build time)
       index.ts
       gm.ts             # the only file that calls GM_*: async interface, caps, grant table, TM/VM implementation
+      match.ts          # Chrome match patterns → RegExp
+      keys.ts           # GM value key names (x2u:<ns>:…)
+      registry.ts       # tab registry: heartbeat, roster doorbell, discovery
       bus.ts            # in-tab + cross-tab messaging
       lease.ts          # background leader election
       tabs.ts storage.ts alarms.ts menus.ts ui.ts net.ts i18n.ts scripting.ts ...
@@ -68,7 +74,10 @@ ext2userscript/
     corpus.json         # pinned cases
     cases/<id>.ts       # per-extension Playwright assertions
     emulator/           # stands in for TM/VM behind gm.ts (CI tier)
+    real/               # release tier: profile setup, launch and userscript install for real TM/VM
+    session.ts          # one API over the emulator, tm and vm backends
     run.ts              # runs corpus for ext2userscript and the baseline, prints scorecard
+  spikes/               # throwaway spike code and its recorded results
   test/                 # node:test unit tests + Playwright runtime tests
 ```
 
@@ -195,10 +204,10 @@ Built from `src/runtime` into one minified string, which the converter embeds wi
 Every GM call goes through this one file. No other runtime file names a `GM_*` function.
 
 - **Async-only interface:** `getValue`, `setValue`, `deleteValue`, `listValues`, `addValueChangeListener`, `removeValueChangeListener`, `registerMenuCommand`, `unregisterMenuCommand`, `xmlHttpRequest`, `addElement`, `openInTab`, `notification`, and `cookie` (list, set, delete). Every method returns a Promise.
-- **Capability flags:** `caps = { valueListeners, menus, cookies }`, detected at startup from which functions exist. On TM and VM, `valueListeners` and `menus` are true; `cookies` is true on TM only.
+- **Capability flags:** `caps = { valueListeners, menus, cookies }`, detected at startup from which functions exist. On TM and VM, `valueListeners` and `menus` are true; `cookies` is true wherever the manager provides `GM_cookie` (TM, and VM since 2.35.1).
 - **One implementation, for TM and VM:** it wraps the synchronous `GM_*` functions that both managers provide. Each method makes its underlying call before its first `await`, so only the result is async. That keeps two timings intact: the lease release written during `pagehide` (§5.4), and page-world scripts injected at `document_start` (§5.5).
 - **No fallback code yet:**
-  - `cookies` false (VM): `chrome.cookies.*` rejects (§9).
+  - `cookies` false: `chrome.cookies.*` rejects (§9).
   - `menus` false: anything that needs a menu entry rejects the same way.
   - `valueListeners` false (never on TM/VM): the runtime logs one error naming the detected manager (`GM_info.scriptHandler`) and saying v1 supports Tampermonkey and Violentmonkey, then stops.
   - Fallbacks come with support for other managers (§1, Later).
@@ -217,7 +226,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 
 | API | Status | Implementation |
 |---|---|---|
-| `storage.local` / `sync` / `session` | supported | One GM value per key under `x2u:<ns>:s:<area>:<key>`. `session` is cleared when the lease is first taken in a fresh browser session (no live tabs seen for over 10s). |
+| `storage.local` / `sync` / `session` | supported | One GM value per key under `x2u:<ns>:s:<area>:<key>`. `session` is cleared when the lease is first taken in a fresh browser session (no tab heartbeat newer than the 90s staleness limit, §5.3). |
 | `storage.onChanged`, `storage.<area>.onChanged` | supported | `gm.addValueChangeListener` on the keys, which works across tabs |
 | `runtime.sendMessage` / `onMessage` / `connect` / `onConnect` / `Port` | supported | §5.3 |
 | `runtime.getURL`, `getManifest`, `id`, `lastError`, `onInstalled`, `onStartup`, `openOptionsPage`, `getPlatformInfo` | supported | `onInstalled` fires once per installed version (tracked in GM storage) |
@@ -235,7 +244,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 | `notifications.create` / `clear` / `onClicked` | supported | `gm.notification` |
 | `i18n.getMessage` / `getUILanguage` / `detectLanguage` | supported / supported / unsupported | |
 | `permissions.contains` / `getAll` / `request` / `remove` | partial | Answers come from the manifest. `request` resolves true, and removals persist in GM storage. |
-| `cookies.*` | partial | `gm.cookie`, which needs `caps.cookies`, so TM only. On VM the calls reject (§5.1), and the report flags it. |
+| `cookies.*` | partial | `gm.cookie`, which needs `caps.cookies` (TM, and VM since 2.35.1; VM returns httpOnly cookies only when the user enables that). Where it's missing, the calls reject (§5.1). |
 | `extension.getBackgroundPage`, `runtime.getBackgroundPage` | partial | Works only when the current tab is the leader; otherwise rejects |
 | `webRequest`, `declarativeNetRequest`, `proxy`, `identity`, `offscreen`, `sidePanel`, `devtools`, `debugger`, `tabCapture`, `downloads` | unsupported | Reject with `Error("ext2userscript: chrome.X is not available in userscripts")`, logged once |
 
@@ -244,22 +253,28 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 ### 5.3 Messaging
 - **In-tab:** content ↔ popup/options ↔ background (when this tab is the leader) is delivered directly through an in-memory bus with structured clone semantics (`structuredClone`).
 - **Cross-tab:** single-writer outbox keys, so concurrent writes never lose messages:
-  - Each tab writes only `x2u:<ns>:out:<tabId>`, which holds a ring buffer of its last 64 messages `{seq, to, payload}`.
+  - Each tab writes only `x2u:<ns>:out:<tabId>`, which holds a per-page `epoch` and a ring buffer of its last 64 messages `{seq, t, to, payload}`.
   - Each tab listens (via `gm.addValueChangeListener`) to the outbox keys of every other live tab, and tracks the last `seq` it has read per sender.
-- **Discovery:** each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, ts}` every 2s. `gm.listValues()` is polled every 2s to find tab keys. A tab whose `ts` is older than 6s counts as gone, which fires `tabs.onRemoved`, and its keys are deleted.
+  - On first contact with a sender, a tab delivers only messages sent after it started. A new `epoch` (the sender navigated, keeping its tab id) restarts the sequence instead of being ignored.
+  - Managers may coalesce rapid writes. If a reader falls more than 64 messages behind, the gap is counted and logged, not hidden.
+- **Discovery:**
+  - Each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, ts}` every 2s, and polls `gm.listValues()` for tab keys on the same beat.
+  - A tab that starts, leaves (`pagehide`) or returns from the back/forward cache (`pageshow`) also writes `x2u:<ns>:roster`. Every tab listens to that key and rescans at once. Without this doorbell, a content script's first message to the background could wait up to 2s.
+  - A leaving tab deletes its own key, so the others see it go immediately.
+  - A tab whose `ts` is older than 90s counts as gone, which fires `tabs.onRemoved`, and its keys are deleted. The limit is long because Chrome throttles timers in tabs hidden for over 5 minutes to one wake-up per minute; a shorter limit would drop live background tabs.
 - **Responses:** a response (`sendResponse` or a returned promise) is just another message with `replyTo`. The default timeout is 30s, after which `lastError` is set to "The message port closed before a response was received."
 - **Tab id:** a random 31-bit integer per tab, kept across same-origin navigations through `sessionStorage`. The ceiling: a cross-origin navigation in the same tab gets a new id, appearing as remove plus create. Upgrade path: a `gm.getTab` method backed by TM's `GM_getTab`.
 
 ### 5.4 Background leader
 - **Lease:** stored at `x2u:<ns>:lease` as `{holder, exp}`. This is the only key with multiple writers.
 - **Every 2s, each tab:**
-  - If the lease is missing or `exp < now`, it writes `{holder: me, exp: now + 6000}`, waits 300ms and re-reads. If `holder === me`, it becomes the leader.
+  - If the lease is missing or `exp < now`, it writes `{holder: me, exp: now + 90000}`, waits 300ms and re-reads. If `holder === me`, it becomes the leader. The 90s expiry outlasts Chrome's one-wake-up-per-minute throttling of long-hidden tabs, so a hidden leader keeps its lease.
   - The leader renews every 2s.
   - On each renewal the leader re-reads first. If `holder !== me`, it steps down: it stops dispatching messages, alarms and events to background listeners. Timers already started by background code keep running; the ceiling here is that background timers are not cancelled.
-- **Handover:** on `pagehide`, the leader writes `exp: 0` so another tab takes over immediately. This is best effort: the write is issued synchronously (§5.1), and if it doesn't land, the lease still expires within 6s.
+- **Handover:** on `pagehide`, the leader writes `exp: 0` so another tab takes over immediately. This is best effort: the write is issued synchronously (§5.1), and if it doesn't land, the lease still expires within 90s. Every tab listens to the lease key, so a release is picked up at once rather than on the next beat. A tab writes `exp: 0` only while it still holds the lease, so a stale leader can't clobber its successor.
 - **New leader:**
   - It runs the background bundle from the top.
-  - It fires `runtime.onStartup` only for the first leader of a browser session. A browser session starts when a lease is taken and no tab key has a heartbeat newer than 10s; this is the same definition that clears `storage.session` in §5.2.
+  - It fires `runtime.onStartup` only for the first leader of a browser session. A browser session starts when a lease is taken and no tab key has a heartbeat newer than 90s; this is the same definition that clears `storage.session` in §5.2.
   - It fires `onInstalled` once per version.
 - **What survives a handover:** storage only. This matches MV3 service-worker semantics. MV2 extensions with `persistent: true` are reported as partial.
 
@@ -356,7 +371,7 @@ Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`l
 |---|---|---|
 | S1 | With `@sandbox DOM` (TM) and `@inject-into content` (VM): is every `GM_*` function in `gm.ts`'s grant table still available, does `gm.addElement` run a page-world script synchronously, and are content scripts isolated from page globals? | All available in both managers; an injected script runs before the next page script; page globals are not visible |
 | S2 | Popup modal on strict-CSP sites (GitHub, YouTube, X): do the `about:blank` iframe plus userscript-context JS plus `gm.addElement` styles work, and which asset types fail? | JS runs and styles apply on all three. Failing asset types are recorded as report warnings. |
-| S3 | Can `esbuild-wasm`, with the virtual-fs plugin, bundle a real MV3 module service worker (LeetCode Enhancer's WXT build) inside a Web Worker in current Chrome, Firefox and Safari? | The bundle is byte-identical to native esbuild's output; the first conversion takes under 10s on a laptop |
+| S3 | Can `esbuild-wasm`, with the virtual-fs plugin, bundle a real MV3 module service worker (Refined GitHub, whose manifest declares `type: "module"`; LeetCode Enhancer's WXT build doesn't use a module worker) inside a Web Worker in current Chrome, Firefox and Safari? | The bundle is byte-identical to native esbuild's output; the first conversion takes under 10s on a laptop |
 | S4 | Lease and outbox protocol under churn in real TM and VM (not just the emulator) | No double leader after settling; no lost messages over 1,000 sends |
 
 If a spike fails, its section of this spec is revised before implementation continues.
