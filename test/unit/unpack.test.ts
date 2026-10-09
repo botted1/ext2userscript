@@ -27,6 +27,14 @@ function crx2(payload: Uint8Array, keyLength = 5, signatureLength = 3): Uint8Arr
   return out;
 }
 
+/** Overwrites a 32-bit little-endian field of the first central-directory header; `field` is its offset from that header. */
+function patchCentral(zipBytes: Uint8Array, field: number, value: number): Uint8Array {
+  const out = zipBytes.slice();
+  const header = out.findIndex((_, i) => out[i] === 0x50 && out[i + 1] === 0x4b && out[i + 2] === 0x01 && out[i + 3] === 0x02);
+  new DataView(out.buffer).setUint32(header + field, value, true);
+  return out;
+}
+
 const extension = zip({ "manifest.json": '{"manifest_version":3}', "js/content.js": "console.log(1)", "icons/": "" });
 
 describe("unpack", () => {
@@ -73,5 +81,27 @@ describe("unpack", () => {
     const bad = crx3(extension);
     new DataView(bad.buffer).setUint32(4, 4, true);
     assert.throws(() => unpack(bad), /Unsupported CRX version 4/);
+  });
+
+  it("rejects a colon in any path segment", () => {
+    assert.throws(() => unpack(zip({ "manifest.json": "{}", "C:evil.js": "" })), /Unsafe path in archive/);
+    assert.throws(() => unpack(zip({ "manifest.json": "{}", "a/C:evil.js": "" })), /Unsafe path in archive/);
+  });
+
+  it("rejects backslash traversal", () => {
+    assert.throws(() => unpack(zip({ "manifest.json": "{}", "a\\..\\..\\evil.js": "" })), /Unsafe path in archive/);
+  });
+
+  it("wraps a truncated archive as corrupt", () => {
+    assert.throws(() => unpack(extension.subarray(0, extension.length - 10)), /Corrupt or truncated archive/);
+  });
+
+  it("refuses a declared size over the cap before inflating", () => {
+    assert.throws(() => unpack(patchCentral(zip({ "manifest.json": "{}" }), 24, 0x40000000)), /too large to unpack/);
+  });
+
+  it("counts stored entries by their compressed size", () => {
+    const stored = zipSync({ "manifest.json": strToU8("{}") }, { level: 0 });
+    assert.throws(() => unpack(patchCentral(patchCentral(stored, 20, 0x40000000), 24, 0)), /too large to unpack/);
   });
 });

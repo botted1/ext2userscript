@@ -1,18 +1,39 @@
 // Unpacks extension archives in memory (spec §3.1). Runs in Node and in the browser.
-import { unzipSync } from "fflate";
+import { unzipSync, type Unzipped } from "fflate";
 
 /** An unpacked extension: relative POSIX path → file bytes. */
 export type ExtensionFiles = Map<string, Uint8Array>;
 
+const MAX_UNPACKED_BYTES = 512 * 1024 * 1024;
+
 /** Unpacks a .zip, .xpi or .crx (v2 or v3). Throws a readable Error for anything else. */
 export function unpack(bytes: Uint8Array): ExtensionFiles {
   const files: ExtensionFiles = new Map();
-  for (const [name, data] of Object.entries(unzipSync(zipPayload(bytes)))) {
+  for (const [name, data] of Object.entries(inflate(zipPayload(bytes)))) {
     if (name.endsWith("/")) continue; // directory entry
     files.set(safePath(name), data);
   }
   if (!files.has("manifest.json")) throw new Error("Not an extension: manifest.json is missing from the archive");
   return files;
+}
+
+/** Inflates the archive. The size cap runs in fflate's filter, so it refuses before each entry is allocated. */
+function inflate(zip: Uint8Array): Unzipped {
+  let declared = 0;
+  const tooLarge = new Error("Archive is too large to unpack (limit 512 MiB)");
+  try {
+    return unzipSync(zip, {
+      filter({ size, originalSize }) {
+        // Stored entries are copied at `size`, deflated ones are allocated at `originalSize`, so count both.
+        declared += size + originalSize;
+        if (declared > MAX_UNPACKED_BYTES) throw tooLarge;
+        return true;
+      },
+    });
+  } catch (error) {
+    if (error === tooLarge) throw error;
+    throw new Error(`Corrupt or truncated archive (${(error as Error).message})`, { cause: error });
+  }
 }
 
 function zipPayload(bytes: Uint8Array): Uint8Array {
@@ -42,7 +63,7 @@ const startsWith = (bytes: Uint8Array, magic: string) => [...magic].every((char,
 /** Normalises an entry name and rejects anything that could escape the extension root. */
 function safePath(name: string): string {
   const parts = name.replace(/\\/g, "/").split("/").filter((part) => part !== "" && part !== ".");
-  if (parts.length === 0 || parts.includes("..") || /^[a-z]:$/i.test(parts[0])) {
+  if (parts.length === 0 || parts.includes("..") || parts.some((part) => part.includes(":"))) {
     throw new Error(`Unsafe path in archive: ${name}`);
   }
   return parts.join("/");
