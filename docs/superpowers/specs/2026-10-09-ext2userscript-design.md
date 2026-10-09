@@ -64,7 +64,7 @@ ext2userscript/
       keys.ts           # GM value key names (x2u:<ns>:…)
       registry.ts       # tab registry: heartbeat, roster doorbell, discovery
       bus.ts            # in-tab + cross-tab messaging
-      lease.ts          # background leader election
+      elect.ts          # background leader election from the registry
       tabs.ts storage.ts alarms.ts menus.ts ui.ts net.ts i18n.ts scripting.ts ...
     cli.ts              # download from stores, read dirs/files, call convert, write output
     download.ts         # CWS / AMO / Edge Add-ons fetchers (CLI and proxy)
@@ -205,7 +205,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 
 - **Async-only interface:** `getValue`, `setValue`, `deleteValue`, `listValues`, `addValueChangeListener`, `removeValueChangeListener`, `registerMenuCommand`, `unregisterMenuCommand`, `xmlHttpRequest`, `addElement`, `openInTab`, `notification`, and `cookie` (list, set, delete). Every method returns a Promise.
 - **Capability flags:** `caps = { valueListeners, menus, cookies }`, detected at startup from which functions exist. On TM and VM, `valueListeners` and `menus` are true; `cookies` is true wherever the manager provides `GM_cookie` (TM, and VM since 2.35.1).
-- **One implementation, for TM and VM:** it wraps the synchronous `GM_*` functions that both managers provide. Each method makes its underlying call before its first `await`, so only the result is async. That keeps two timings intact: the lease release written during `pagehide` (§5.4), and page-world scripts injected at `document_start` (§5.5).
+- **One implementation, for TM and VM:** it wraps the synchronous `GM_*` functions that both managers provide. Each method makes its underlying call before its first `await`, so only the result is async. That keeps two timings intact: the registry cleanup written during `pagehide` (§5.3), and page-world scripts injected at `document_start` (§5.5).
 - **No fallback code yet:**
   - `cookies` false: `chrome.cookies.*` rejects (§9).
   - `menus` false: anything that needs a menu entry rejects the same way.
@@ -226,7 +226,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 
 | API | Status | Implementation |
 |---|---|---|
-| `storage.local` / `sync` / `session` | supported | One GM value per key under `x2u:<ns>:s:<area>:<key>`. `session` is cleared when the lease is first taken in a fresh browser session (no tab heartbeat newer than the 90s staleness limit, §5.3). |
+| `storage.local` / `sync` / `session` | supported | One GM value per key under `x2u:<ns>:s:<area>:<key>`. `session` is cleared when a new leader detects a fresh browser session (§5.4). |
 | `storage.onChanged`, `storage.<area>.onChanged` | supported | `gm.addValueChangeListener` on the keys, which works across tabs |
 | `runtime.sendMessage` / `onMessage` / `connect` / `onConnect` / `Port` | supported | §5.3 |
 | `runtime.getURL`, `getManifest`, `id`, `lastError`, `onInstalled`, `onStartup`, `openOptionsPage`, `getPlatformInfo` | supported | `onInstalled` fires once per installed version (tracked in GM storage) |
@@ -253,12 +253,12 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 ### 5.3 Messaging
 - **In-tab:** content ↔ popup/options ↔ background (when this tab is the leader) is delivered directly through an in-memory bus with structured clone semantics (`structuredClone`).
 - **Cross-tab:** single-writer outbox keys, so concurrent writes never lose messages:
-  - Each tab writes only `x2u:<ns>:out:<tabId>`, which holds a per-page `epoch` and a ring buffer of its last 64 messages `{seq, t, to, payload}`.
+  - Each tab writes only `x2u:<ns>:out:<tabId>`, which holds a per-page `epoch` and a ring buffer of its last 64 messages from the past 10s `{seq, t, to, payload}`. The age limit keeps large messages from being rewritten with every later send.
   - Each tab listens (via `gm.addValueChangeListener`) to the outbox keys of every other live tab, and tracks the last `seq` it has read per sender.
   - On first contact with a sender, a tab delivers only messages sent after it started. A new `epoch` (the sender navigated, keeping its tab id) restarts the sequence instead of being ignored.
   - Managers may coalesce rapid writes. If a reader falls more than 64 messages behind, the gap is counted and logged, not hidden.
 - **Discovery:**
-  - Each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, ts}` every 2s, and polls `gm.listValues()` for tab keys on the same beat.
+  - Each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, since, ts}` every 2s, and polls `gm.listValues()` for tab keys on the same beat. `since` drives the election (§5.4).
   - A tab that starts, leaves (`pagehide`) or returns from the back/forward cache (`pageshow`) also writes `x2u:<ns>:roster`. Every tab listens to that key and rescans at once. Without this doorbell, a content script's first message to the background could wait up to 2s.
   - A leaving tab deletes its own key, so the others see it go immediately.
   - A tab whose `ts` is older than 90s counts as gone, which fires `tabs.onRemoved`, and its keys are deleted. The limit is long because Chrome throttles timers in tabs hidden for over 5 minutes to one wake-up per minute; a shorter limit would drop live background tabs.
@@ -266,15 +266,16 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 - **Tab id:** a random 31-bit integer per tab, kept across same-origin navigations through `sessionStorage`. The ceiling: a cross-origin navigation in the same tab gets a new id, appearing as remove plus create. Upgrade path: a `gm.getTab` method backed by TM's `GM_getTab`.
 
 ### 5.4 Background leader
-- **Lease:** stored at `x2u:<ns>:lease` as `{holder, exp}`. This is the only key with multiple writers.
-- **Every 2s, each tab:**
-  - If the lease is missing or `exp < now`, it writes `{holder: me, exp: now + 90000}`, waits 300ms and re-reads. If `holder === me`, it becomes the leader. The 90s expiry outlasts Chrome's one-wake-up-per-minute throttling of long-hidden tabs, so a hidden leader keeps its lease.
-  - The leader renews every 2s.
-  - On each renewal the leader re-reads first. If `holder !== me`, it steps down: it stops dispatching messages, alarms and events to background listeners. Timers already started by background code keep running; the ceiling here is that background timers are not cancelled.
-- **Handover:** on `pagehide`, the leader writes `exp: 0` so another tab takes over immediately. This is best effort: the write is issued synchronously (§5.1), and if it doesn't land, the lease still expires within 90s. Every tab listens to the lease key, so a release is picked up at once rather than on the next beat. A tab writes `exp: 0` only while it still holds the lease, so a stale leader can't clobber its successor.
+- **Election:** the leader is the live tab with the earliest `since` (ties go to the lower id). Every tab computes this from the registry (§5.3).
+  - `since` is when the tab joined, or when it rejoined after the back/forward cache, so a returning tab doesn't take leadership back.
+  - Every input is a key with a single writer, so the tabs' local copies converge on the same answer. A shared lease key could leave tabs disagreeing about who won after simultaneous claims (for example, session restore opening 20 tabs), with no leader until it expired.
+  - A tab starts leading only after it has been the oldest live tab for 300ms, so tabs that start together can't both lead before they've seen each other.
+  - A leader that finds an older live tab (for example, one that was frozen and came back) steps down: it stops dispatching messages, alarms and events to background listeners. Timers already started by background code keep running; the ceiling here is that background timers are not cancelled.
+  - The 90s staleness limit (§5.3) means a long-hidden leader whose timers are throttled to once a minute keeps the lead.
+- **Handover:** a leader's `pagehide` deletes its registry key and rings the roster (§5.3), so the next-oldest tab takes over at once. A leader that disappears without `pagehide` (crash, tab discard) is replaced when its heartbeat goes stale.
 - **New leader:**
   - It runs the background bundle from the top.
-  - It fires `runtime.onStartup` only for the first leader of a browser session. A browser session starts when a lease is taken and no tab key has a heartbeat newer than 90s; this is the same definition that clears `storage.session` in §5.2.
+  - It fires `runtime.onStartup` only for the first leader of a browser session. The leader writes `x2u:<ns>:session` with a timestamp on every beat; a new leader that finds it missing or older than 90s treats the browser as restarted. The same check clears `storage.session` (§5.2).
   - It fires `onInstalled` once per version.
 - **What survives a handover:** storage only. This matches MV3 service-worker semantics. MV2 extensions with `persistent: true` are reported as partial.
 
@@ -372,7 +373,7 @@ Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`l
 | S1 | With `@sandbox DOM` (TM) and `@inject-into content` (VM): is every `GM_*` function in `gm.ts`'s grant table still available, does `gm.addElement` run a page-world script synchronously, and are content scripts isolated from page globals? | All available in both managers; an injected script runs before the next page script; page globals are not visible |
 | S2 | Popup modal on strict-CSP sites (GitHub, YouTube, X): do the `about:blank` iframe plus userscript-context JS plus `gm.addElement` styles work, and which asset types fail? | JS runs and styles apply on all three. Failing asset types are recorded as report warnings. |
 | S3 | Can `esbuild-wasm`, with the virtual-fs plugin, bundle a real MV3 module service worker (Refined GitHub, whose manifest declares `type: "module"`; LeetCode Enhancer's WXT build doesn't use a module worker) inside a Web Worker in current Chrome, Firefox and Safari? | The bundle is byte-identical to native esbuild's output; the first conversion takes under 10s on a laptop |
-| S4 | Lease and outbox protocol under churn in real TM and VM (not just the emulator) | No double leader after settling; no lost messages over 1,000 sends |
+| S4 | Leader election and outbox protocol under churn in real TM and VM (not just the emulator) | No double leader after settling; no lost messages over 1,000 sends |
 
 If a spike fails, its section of this spec is revised before implementation continues.
 
