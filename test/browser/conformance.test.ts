@@ -8,8 +8,14 @@ import { waitForJson } from "../support/dom.ts";
 import { startServer, type Server } from "../support/server.ts";
 import { buildUserscript } from "../support/userscript.ts";
 
-const page = (head = "") => () =>
-  new Response(`<!doctype html><html><head><title>x2u</title>${head}</head><body>x2u</body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+const page = (head = "", headers: Record<string, string> = {}) => () =>
+  new Response(`<!doctype html><html><head><title>x2u</title>${head}</head><body>x2u</body></html>`, {
+    headers: { "content-type": "text/html; charset=utf-8", ...headers },
+  });
+
+/** What a page's own script records about the userscript: whether its injected script ran first, and in which world. */
+const PAGE_SAW_USERSCRIPT =
+  'document.documentElement.setAttribute("data-page-saw-sync", document.documentElement.getAttribute("data-x2u-sync") ?? "no"); document.documentElement.setAttribute("data-page-saw-world", String(window.__x2uPageWorld));';
 
 type SingleResult = {
   done?: boolean;
@@ -44,9 +50,9 @@ for (const backend of backendsFromEnv()) {
 
     before(async () => {
       site = await startServer({
-        "/conformance.html": page(
-          `<script>document.documentElement.setAttribute("data-page-saw-sync", document.documentElement.getAttribute("data-x2u-sync") ?? "no"); document.documentElement.setAttribute("data-page-saw-world", String(window.__x2uPageWorld)); window.pageGlobal = "page";</script>`,
-        ),
+        "/conformance.html": page(`<script>${PAGE_SAW_USERSCRIPT} window.pageGlobal = "page";</script>`),
+        // Only the nonce'd inline script may run, so a script the userscript injects needs the manager to get past the CSP.
+        "/conformance-csp.html": page(`<script nonce="x2u">${PAGE_SAW_USERSCRIPT}</script>`, { "content-security-policy": "script-src 'nonce-x2u'" }),
         "/reader.html": page(),
         "/opened.html": page(),
       });
@@ -81,6 +87,9 @@ for (const backend of backendsFromEnv()) {
         const r = await waitForJson<SingleResult>(tab, "data-x2u-conformance", (x) => x.done === true, 30_000);
         console.log(`[${backend}] ${JSON.stringify(r)}`);
         assert.equal(r.error, undefined, `probe threw: ${r.error}`);
+        if (backend === "emulator") assert.equal(r.caps?.cookies, true, "the emulator provides GM_cookie, so the cookie checks below must run");
+        if (backend === "tm") assert.equal(r.handler, "Tampermonkey");
+        if (backend === "vm") assert.equal(r.handler, "Violentmonkey");
         assert.equal(r.caps?.valueListeners, true);
         assert.equal(r.caps?.menus, true);
         assert.equal(r.addElementSync, true, "gm.addElement must run a page-world script synchronously");
@@ -105,6 +114,25 @@ for (const backend of backendsFromEnv()) {
         await session.close();
       }
     });
+
+    it(
+      "injects page-world scripts before the page's own scripts on a strict-CSP page",
+      { skip: backend === "emulator" ? "the emulator doesn't bypass page CSP" : false },
+      async () => {
+        const session = await startSession(backend, userscript);
+        try {
+          const tab = await session.context.newPage();
+          await tab.goto(`${site.origin}/conformance-csp.html`);
+          const r = await waitForJson<SingleResult>(tab, "data-x2u-conformance", (x) => x.done === true, 30_000);
+          console.log(`[${backend} csp] ${JSON.stringify(r)}`);
+          assert.equal(r.error, undefined, `probe threw: ${r.error}`);
+          assert.equal(r.pageSawSync, "1", "a script injected at document-start must run before the page's own scripts, whatever the page's CSP says");
+          assert.equal(r.pageSawWorld, "1", "the script gm.addElement injects must run in the page's own world, whatever the page's CSP says");
+        } finally {
+          await session.close();
+        }
+      },
+    );
 
     it("delivers value changes from another tab with remote: true", async () => {
       const session = await startSession(backend, userscript);

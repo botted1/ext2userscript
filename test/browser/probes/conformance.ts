@@ -6,34 +6,59 @@ const html = document.documentElement;
 const params = new URLSearchParams(location.search);
 const results: Record<string, unknown> = {};
 const report = () => html.setAttribute("data-x2u-conformance", JSON.stringify(results));
+/** Every result is reported as soon as it is known, so a probe that hangs leaves its partial results behind. */
+const record = (name: string, value: unknown) => {
+  results[name] = value;
+  report();
+};
+const fail = (error: unknown) => record("error", String(error));
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const gm = createGm();
 
 if (location.pathname === "/conformance.html") singlePage();
-if (location.pathname === "/reader.html") void reader();
-if (location.pathname === "/writer.html") void gm.setValue(`conf:${params.get("token")}:remote`, "hello");
+if (location.pathname === "/conformance-csp.html") strictCspPage();
+if (location.pathname === "/reader.html") void reader().catch(fail);
+if (location.pathname === "/writer.html") void gm.setValue(`conf:${params.get("token")}:remote`, "hello").catch(fail);
 
-function singlePage() {
-  // Runs at document-start, before the page's own scripts (spec §5.1 and S1).
+/** Runs at document-start, before the page's own scripts (spec §5.1 and S1). */
+function injectIntoPage() {
   const injected = gm.addElement(html, "script", {
     textContent: 'document.documentElement.setAttribute("data-x2u-sync", "1"); window.__x2uPageWorld = 1;',
   });
-  results.addElementSync = html.getAttribute("data-x2u-sync") === "1";
+  record("addElementSync", html.getAttribute("data-x2u-sync") === "1");
   injected.then(
-    () => { results.addElementResolved = true; },
-    (error: unknown) => { results.addElementError = String(error); },
+    () => record("addElementResolved", true),
+    (error: unknown) => record("addElementError", String(error)),
   );
+}
+
+function singlePage() {
+  injectIntoPage();
   document.addEventListener("DOMContentLoaded", () => void afterParse(), { once: true });
+}
+
+/** The page's CSP only allows its own nonce'd script. All this page checks is whether the injection still got in first. */
+function strictCspPage() {
+  injectIntoPage();
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      record("pageSawSync", html.getAttribute("data-page-saw-sync"));
+      record("pageSawWorld", html.getAttribute("data-page-saw-world"));
+      record("done", true);
+    },
+    { once: true },
+  );
 }
 
 async function afterParse() {
   try {
     const token = params.get("token") ?? "none";
-    results.caps = gm.caps;
-    results.handler = gm.handler;
-    results.pageSawSync = html.getAttribute("data-page-saw-sync");
-    results.pageSawWorld = html.getAttribute("data-page-saw-world");
-    results.pageGlobalVisible = "pageGlobal" in window;
+    record("caps", gm.caps);
+    record("handler", gm.handler);
+    record("pageSawSync", html.getAttribute("data-page-saw-sync"));
+    record("pageSawWorld", html.getAttribute("data-page-saw-world"));
+    record("pageGlobalVisible", "pageGlobal" in window);
 
     const key = `conf:${token}:value`;
     let roundtrip = true;
@@ -41,61 +66,58 @@ async function afterParse() {
       await gm.setValue(key, value);
       roundtrip &&= JSON.stringify(await gm.getValue(key)) === JSON.stringify(value);
     }
-    results.roundtrip = roundtrip;
-    results.listed = (await gm.listValues()).includes(key);
+    record("roundtrip", roundtrip);
+    record("listed", (await gm.listValues()).includes(key));
     await gm.deleteValue(key);
-    results.deleted = (await gm.getValue(key, "fallback")) === "fallback";
+    record("deleted", (await gm.getValue(key, "fallback")) === "fallback");
 
     const seen: Array<{ value: unknown; remote: boolean }> = [];
     const listener = await gm.addValueChangeListener(key, (_key, _old, value, remote) => seen.push({ value, remote }));
     await gm.setValue(key, "local");
-    await sleep(300);
-    results.localListener = seen[0] ?? null;
+    for (let i = 0; i < 60 && seen.length === 0; i++) await sleep(50); // up to 3 s for the listener to fire
+    record("localListener", seen[0] ?? null);
     await gm.removeValueChangeListener(listener);
     await gm.deleteValue(key);
 
     const menuId = await gm.registerMenuCommand("ext2userscript conformance", () => {});
     await gm.unregisterMenuCommand(menuId);
-    results.menu = true;
+    record("menu", true);
 
     const echo = `http://127.0.0.1:${params.get("api")}/echo`;
     const json = await gm.xmlHttpRequest({ url: echo, method: "POST", data: "ping", headers: { "x-x2u": "1" }, responseType: "json" });
     const body = json.response as { body?: string; header?: string } | undefined;
-    results.xhrJson = json.status === 200 && body?.body === "ping" && body?.header === "1";
+    record("xhrJson", json.status === 200 && body?.body === "ping" && body?.header === "1");
     const bytes = await gm.xmlHttpRequest({ url: `${echo}?bytes=1`, responseType: "arraybuffer" });
-    results.xhrBytes = Object.prototype.toString.call(bytes.response) === "[object ArrayBuffer]" && (bytes.response as ArrayBuffer).byteLength === 4;
+    record("xhrBytes", Object.prototype.toString.call(bytes.response) === "[object ArrayBuffer]" && (bytes.response as ArrayBuffer).byteLength === 4);
 
     const tab = await gm.openInTab(`${location.origin}/opened.html`, { active: false });
     await sleep(1_000);
     tab.close();
     for (let i = 0; i < 20 && !tab.closed; i++) await sleep(100);
-    results.openInTab = tab.closed;
+    record("openInTab", tab.closed);
 
     await gm.notification({ title: "ext2userscript", text: "conformance check" });
-    results.notification = true;
+    record("notification", true);
 
     if (gm.caps.cookies) {
       const url = location.href;
       await gm.cookie.set({ url, name: "x2u_conformance", value: token });
-      results.cookieSet = (await gm.cookie.list({ url, name: "x2u_conformance" })).some((c) => c.value === token);
+      record("cookieSet", (await gm.cookie.list({ url, name: "x2u_conformance" })).some((c) => c.value === token));
       await gm.cookie.delete({ url, name: "x2u_conformance" });
-      results.cookieDeleted = !(await gm.cookie.list({ url, name: "x2u_conformance" })).some((c) => c.name === "x2u_conformance");
+      record("cookieDeleted", !(await gm.cookie.list({ url, name: "x2u_conformance" })).some((c) => c.name === "x2u_conformance"));
     }
   } catch (error) {
-    results.error = String(error);
+    fail(error);
   }
-  results.done = true;
-  report();
+  record("done", true);
 }
 
 async function reader() {
   const key = `conf:${params.get("token")}:remote`;
   await gm.addValueChangeListener(key, (_key, _old, value, remote) => {
-    void gm.listValues().then((keys) => {
-      results.remote = { value, remote, listed: keys.includes(key) };
-      report();
-    });
+    gm.listValues()
+      .then((keys) => record("remote", { value, remote, listed: keys.includes(key) }))
+      .catch(fail);
   });
-  results.readerReady = true;
-  report();
+  record("readerReady", true);
 }

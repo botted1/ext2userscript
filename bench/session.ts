@@ -2,13 +2,16 @@
 // Violentmonkey in the release tier.
 import { chromium, type BrowserContext } from "playwright";
 import { installEmulator, type Emulator } from "./emulator/index.ts";
+import { installUserscript } from "./real/install.ts";
+import { launchReal } from "./real/launch.ts";
 
 export const BACKENDS = ["emulator", "tm", "vm"] as const;
 export type Backend = (typeof BACKENDS)[number];
 export type Session = { context: BrowserContext; emulator?: Emulator; close(): Promise<void> };
 
 export function backendsFromEnv(): Backend[] {
-  const names = (process.env.X2U_BACKENDS ?? "emulator").split(",").map((name) => name.trim()).filter(Boolean);
+  const names = (process.env.X2U_BACKENDS ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+  if (names.length === 0) names.push("emulator"); // unset, empty or blank all mean the default
   for (const name of names) {
     if (!(BACKENDS as readonly string[]).includes(name)) throw new Error(`Unknown backend "${name}" in X2U_BACKENDS (expected ${BACKENDS.join(", ")})`);
   }
@@ -16,9 +19,23 @@ export function backendsFromEnv(): Backend[] {
 }
 
 export async function startSession(backend: Backend, userscript: string): Promise<Session> {
-  if (backend !== "emulator") throw new Error(`Backend "${backend}" is not wired up yet`);
-  const browser = await chromium.launch();
-  const context = await browser.newContext();
-  const emulator = await installEmulator(context, userscript);
-  return { context, emulator, close: () => browser.close() };
+  if (backend === "emulator") {
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext();
+      const emulator = await installEmulator(context, userscript);
+      return { context, emulator, close: () => browser.close() };
+    } catch (error) {
+      await browser.close().catch(() => {}); // the original error matters more than a failed close
+      throw error;
+    }
+  }
+  const { context, extensionId } = await launchReal(backend);
+  try {
+    await installUserscript(context, extensionId, userscript);
+  } catch (error) {
+    await context.close().catch(() => {});
+    throw error;
+  }
+  return { context, close: () => context.close() };
 }
