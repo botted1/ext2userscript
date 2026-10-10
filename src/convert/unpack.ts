@@ -2,13 +2,15 @@
 // The zip's central directory is read here rather than by fflate's unzipSync, so every entry is checked before
 // anything is inflated: the entry count, the total size, and that names are safe and unambiguous. Each entry's
 // CRC-32 is checked after inflating, which catches an entry whose declared size is wrong.
-import { inflateSync } from "fflate";
+import { Inflate } from "fflate";
 
 /** An unpacked extension: relative POSIX path → file bytes. */
 export type ExtensionFiles = Map<string, Uint8Array>;
 
 const MAX_UNPACKED_BYTES = 512 * 1024 * 1024;
 const MAX_ENTRIES = 50_000;
+/** Deflate input is fed in steps this big, so an entry that outgrows its declared size is caught within one step. */
+const INFLATE_STEP = 16 * 1024;
 
 type Entry = { path: string; flags: number; method: number; crc: number; compressedSize: number; size: number; localOffset: number };
 
@@ -101,17 +103,34 @@ function extract(zip: Uint8Array, view: DataView, entry: Entry): Uint8Array {
     if (entry.compressedSize !== entry.size) throw corrupt(`${entry.path} has inconsistent sizes`);
     out = data.slice();
   } else if (entry.method === 8) {
-    try {
-      // A buffer of the declared size caps memory: inflating never grows it, and a wrong size fails the checks below.
-      out = inflateSync(data, { out: new Uint8Array(entry.size) });
-    } catch (error) {
-      throw corrupt(`${entry.path}: ${(error as Error).message}`, error);
-    }
+    out = inflateCapped(data, entry);
   } else {
     throw new Error(`Unsupported compression method ${entry.method} for ${entry.path}`);
   }
   if (out.length !== entry.size || crc32(out) !== entry.crc) throw corrupt(`${entry.path} fails its CRC check`);
   return out;
+}
+
+/**
+ * Inflates step by step and stops as soon as the output passes the declared size, so the declared sizes (capped in
+ * total) also cap the work. Inflating into a fixed buffer would cap memory but not time: fflate keeps inflating and
+ * drops what doesn't fit, so a few KiB could cost gigabytes of work.
+ */
+function inflateCapped(data: Uint8Array, entry: Entry): Uint8Array {
+  const out = new Uint8Array(entry.size);
+  let length = 0;
+  let overflow: Error | undefined;
+  const inflater = new Inflate((chunk) => {
+    if (length + chunk.length > entry.size) throw (overflow = corrupt(`${entry.path} inflates to more than its declared size`));
+    out.set(chunk, length);
+    length += chunk.length;
+  });
+  try {
+    for (let at = 0; at < data.length; at += INFLATE_STEP) inflater.push(data.subarray(at, at + INFLATE_STEP), at + INFLATE_STEP >= data.length);
+  } catch (error) {
+    throw error === overflow ? error : corrupt(`${entry.path}: ${(error as Error).message}`, error);
+  }
+  return out.subarray(0, length);
 }
 
 let crcTable: Uint32Array | undefined;

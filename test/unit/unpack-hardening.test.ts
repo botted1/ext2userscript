@@ -79,11 +79,19 @@ describe("unpack hardening", () => {
   });
 
   it("rejects an entry whose declared size is smaller than its data", () => {
-    assert.throws(() => unpack(patchCentral(zip({ "manifest.json": body }), 24, 3)), /manifest\.json fails its CRC check/);
+    assert.throws(() => unpack(patchCentral(zip({ "manifest.json": body }), 24, 3)), /manifest\.json inflates to more than its declared size/);
   });
 
   it("rejects an entry whose declared size is larger than its data", () => {
     assert.throws(() => unpack(patchCentral(zip({ "manifest.json": body }), 24, 400)), /manifest\.json fails its CRC check/);
+  });
+
+  it("stops inflating an entry as soon as it outgrows its declared size", () => {
+    // 64 MiB of zeros deflates to about 64 KiB; declaring 10 bytes must not cost 64 MiB of inflating.
+    const archive = patchCentral(zipSync({ "big.bin": new Uint8Array(64 * 1024 * 1024), "manifest.json": strToU8("{}") }), 24, 10);
+    const started = performance.now();
+    assert.throws(() => unpack(archive), /Corrupt or truncated archive \(big\.bin inflates to more than its declared size\)/);
+    assert.ok(performance.now() - started < 100, `took ${Math.round(performance.now() - started)} ms`);
   });
 
   it("rejects encrypted entries", () => {
