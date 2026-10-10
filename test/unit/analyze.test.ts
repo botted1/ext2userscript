@@ -79,6 +79,19 @@ describe("verdictOf", () => {
 });
 
 describe("formatReport", () => {
+  it("drops control characters, so an extension's name can't rewrite the terminal", () => {
+    const report: Report = {
+      extension: { name: "Evil\u001b[1A\u001b[2K\rExt likely-works", version: "1\u0007", manifestVersion: 3 },
+      verdict: "unlikely",
+      entries: [{ subject: "x\u009b2J", status: "unsupported", reason: "r\u0000", contexts: ["content"] }],
+      warnings: ["w\nnext"],
+    };
+    const text = formatReport(report);
+    assert.doesNotMatch(text, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    assert.equal(text.split("\n")[0], "Evil[1A[2KExt likely-works 1 (manifest v3): unlikely");
+    assert.deepEqual(text.split("\n").slice(-2), ["Warnings:", "  - wnext"]);
+  });
+
   it("prints the verdict, then entries worst first in aligned columns, then warnings", () => {
     const report: Report = {
       extension: { name: "Ext", version: "1.0", manifestVersion: 3 },

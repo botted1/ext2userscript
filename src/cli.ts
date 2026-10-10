@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { loadEsbuild } from "./convert/esbuild-node.ts";
 import { convert, inspect } from "./convert/index.ts";
 import { slugify } from "./convert/metadata.ts";
-import { formatReport, type Report } from "./convert/report.ts";
+import { formatReport, printable, type Report } from "./convert/report.ts";
 import { loadRuntime } from "./convert/runtime-node.ts";
 import { parseSource, readArchive, readSource, sourceName, type Source } from "./source.ts";
 
@@ -90,7 +90,7 @@ export async function main(argv: readonly string[], out: Output = process.stdout
     out.write(`${formatReport(report)}\n`);
     return report.verdict === "unlikely" ? 2 : 0;
   } catch (error) {
-    err.write(`ext2userscript: ${(error as Error).message}\n`);
+    err.write(`ext2userscript: ${printable((error as Error).message)}\n`);
     return 1;
   }
 }

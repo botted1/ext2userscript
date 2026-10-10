@@ -80,6 +80,13 @@ describe("ext2userscript CLI", () => {
     assert.equal(local.stderr, "");
   });
 
+  it("drops control characters from error messages that quote the archive", async () => {
+    await writeFile(join(cwd, "evil.zip"), zipFiles(new Map([["manifest.json", new Uint8Array()], ["a\u001b[2K.js", new Uint8Array()], ["./a\u001b[2K.js", new Uint8Array()]])));
+    const result = await run(cwd, "report", "evil.zip");
+    assert.equal(result.code, 1);
+    assert.equal(result.stderr, "ext2userscript: Ambiguous archive: a[2K.js appears more than once\n");
+  });
+
   it("explains a bad command line or a missing source", async () => {
     const usage = await run(cwd, "explode", "x");
     assert.equal(usage.code, 1);

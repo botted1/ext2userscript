@@ -28,12 +28,15 @@ export function sortEntries(entries: readonly ReportEntry[]): ReportEntry[] {
   return [...entries].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.subject.localeCompare(b.subject));
 }
 
+/** Text from an extension, safe to print: control characters (escape sequences, carriage returns, line breaks) are dropped. */
+export const printable = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+
 export function formatReport(report: Report): string {
   const { name, version, manifestVersion } = report.extension;
-  const rows = report.entries.map((entry) => [entry.status, entry.subject, entry.contexts.join(", "), entry.reason ?? ""]);
+  const rows = report.entries.map((entry) => [entry.status, entry.subject, entry.contexts.join(", "), entry.reason ?? ""].map(printable));
   const widths = [0, 1, 2].map((column) => Math.max(0, ...rows.map((row) => row[column].length)));
-  const lines = [`${name} ${version} (manifest v${manifestVersion}): ${report.verdict}`];
+  const lines = [`${printable(name)} ${printable(version)} (manifest v${manifestVersion}): ${report.verdict}`];
   for (const row of rows) lines.push(`  ${row.map((cell, i) => (i < 3 ? cell.padEnd(widths[i]) : cell)).join("  ")}`.trimEnd());
-  if (report.warnings.length > 0) lines.push("Warnings:", ...report.warnings.map((warning) => `  - ${warning}`));
+  if (report.warnings.length > 0) lines.push("Warnings:", ...report.warnings.map((warning) => `  - ${printable(warning)}`));
   return lines.join("\n");
 }
