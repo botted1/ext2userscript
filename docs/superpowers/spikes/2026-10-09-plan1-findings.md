@@ -156,7 +156,7 @@ Fixture: Refined GitHub 26.10 (`hlepfoohegkhhmjieoechaddaejaokhf`), declared as 
 
 WebKit is Playwright's WebKit build, not the shipping Safari.
 
-Firefox: `firefox.launch()` exits at once with `Could not find profile folder.`, before any page loads, for every profile location tried (Playwright's temp profile, a scratch folder, a folder in the worktree) and with `MOZ_LEGACY_PROFILES=1`. That is an environment problem, not an S3 result. Reads of `~/Library/Application Support/Firefox` were denied in the sandbox these runs used (`ls` failed with "Operation not permitted"), which Firefox 157 may trip over at start-up; this was not confirmed. Firefox was not run with the sandbox off, because that directory holds real Firefox data. The Firefox test runs in CI (ubuntu-latest).
+Firefox: `firefox.launch()` exits at once with `Could not find profile folder.`, before any page loads, for every profile location tried (Playwright's temp profile, a scratch folder, a folder in the worktree) and with `MOZ_LEGACY_PROFILES=1`. That is an environment problem, not an S3 result. The same failure (`Could not find profile folder.`, with Chromium and WebKit passing) reproduced when the human ran the S3 file in their own terminal, outside the agent sandbox, so the sandbox is not the cause. The Firefox test runs in CI (ubuntu-latest).
 
 **Result:** PASS on Chromium and WebKit; Firefox is not answered here and is pending CI.
 - PASS needs all three rows byte-identical and under 10,000 ms.
