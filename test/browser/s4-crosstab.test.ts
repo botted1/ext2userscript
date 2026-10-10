@@ -41,8 +41,14 @@ for (const backend of backendsFromEnv()) {
     async function open(context: BrowserContext, url: string): Promise<Page> {
       const tab = await context.newPage();
       await tab.goto(url);
-      await waitForAttr(tab, "data-ready", "1");
-      return tab;
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const [ready, error] = await Promise.all([readAttr(tab, "data-ready"), readAttr(tab, "data-error")]);
+        if (error !== null) throw new Error(`S4 probe failed: ${error}`);
+        if (ready === "1") return tab;
+        if (Date.now() > deadline) throw new Error(`Timed out after 10000ms waiting for <html data-ready="1"> (last value: ${ready})`);
+        await tab.waitForTimeout(100);
+      }
     }
 
     it("delivers 1,000 spaced messages and a 50-message burst without loss", async () => {
@@ -86,7 +92,8 @@ for (const backend of backendsFromEnv()) {
           for (let i = 0; i < 5; i++) {
             const ids = [...tabs.keys()];
             const victim = ids[Math.floor(Math.random() * ids.length)];
-            await tabs.get(victim)?.close();
+            // Half the closes run unload handlers (the pagehide delete); the rest leave the key to go stale.
+            await tabs.get(victim)?.close({ runBeforeUnload: Math.random() < 0.5 });
             tabs.delete(victim);
             await openTab();
             await sleep(200 + Math.random() * 600);

@@ -9,7 +9,7 @@ const html = document.documentElement;
 const params = new URLSearchParams(location.search);
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-if (location.pathname === "/s4.html") void main();
+if (location.pathname === "/s4.html") main().catch((error: unknown) => html.setAttribute("data-error", String(error)));
 
 async function main() {
   const gm = createGm();

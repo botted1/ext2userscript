@@ -118,16 +118,29 @@ Run:
 
 | | Emulator | Tampermonkey | Violentmonkey |
 |---|---|---|---|
-| 1,000 spaced messages + 50 burst: received, dropped | 1,050 received, 0 dropped | | |
-| Churn: settle checks run, checks with exactly one leader | 9 checks, 9 with exactly one leader | | |
+| Version | CI emulator | 5.5.1 | 2.49.0 (stable, MV3) |
+| 1,000 spaced messages + 50 burst: received, dropped | 1,050 received, 0 dropped | 1,050 received, 0 dropped | 1,050 received, 0 dropped |
+| Churn: settle checks run, checks with exactly one leader | 9 checks, 9 with exactly one leader | 9 checks, 9 with exactly one leader | 9 checks, 9 with exactly one leader |
 
-The emulator column is from one `npm run test:browser` run. The S4 file passed in four runs in a row with the same message counts. The number of settle checks varied (9, 9, 8, 9) because tab-close timing is random.
+Browser: Chromium 156.0.8078.4 (Playwright 1.64.0, `channel: "chromium"`), headless, for the Tampermonkey and Violentmonkey columns (same as S1). Churn phase: the default 60 s.
 
-The churn test closes tabs with `page.close()`. On the emulator that skips the closing tab's `pagehide` delete (its key stayed in the store; with `runBeforeUnload: true` it was deleted at once), so each leader handover waited out the 3 s staleness limit. The fast `leave()` path is covered by the unit tests only.
+The first two rows of the emulator column are from one `npm run test:browser` run made before the churn test changed (below). The S4 file passed in four runs in a row then, with the same message counts; the number of settle checks varied (9, 9, 8, 9) because tab-close timing is random. After the change the emulator passed once more with 1,050 received, 0 dropped and 9 of 9 settle checks. Each real-manager column is from a single run; both managers passed on the first run, so no rerun was needed.
 
-**Result:** Pending the real-manager run.
-- PASS if every column passes.
-- Otherwise, describe what went wrong (for example two leaders, no leader, or `dropped` > 0) and what it implies for spec §5.3 or §5.4.
+Real-manager log lines:
+
+```
+[tm] S4 messages: received 1050, dropped 0
+[tm] S4 churn: 9 settle checks, 9 with exactly one leader
+[vm] S4 messages: received 1050, dropped 0
+[vm] S4 churn: 9 settle checks, 9 with exactly one leader
+```
+
+The churn test closes each victim tab with `close({ runBeforeUnload: Math.random() < 0.5 })`, so about half the closes run the unload handlers (the §5.4 `pagehide` handler deletes the tab's key at once) and the rest leave the key in the store until the 3 s staleness limit expires. Both the `pagehide` delete and the staleness path are therefore exercised in every churn run. The run doesn't say which path any single handover took, or whether the closed tab was the leader at the time, and it doesn't count the two kinds of close, so all it shows is that a random mix of both kinds left exactly one leader after every settle period on both managers (about 45 closes each). Before this change the test used plain `page.close()`, which on the emulator skipped the `pagehide` delete, so every leader handover waited out the staleness limit and the fast `leave()` path was covered by the unit tests only. A probe that fails to start now fails the test with its error (`S4 probe failed: …`) instead of a timeout; none did.
+
+**Result:** PASS on all three columns.
+- Messages: no loss. 1,050 of 1,050 received and 0 dropped on Tampermonkey and Violentmonkey, as on the emulator.
+- Election: exactly one leader after each of the 9 settle periods on both managers, with half the closes skipping and half running `pagehide`.
+- Spec §5.3 and §5.4: nothing in this run needs changing. The outbox protocol and the election hold on both real managers with the production-shaped timings scaled down (heartbeat 200 ms, stale after 3 s, grace 300 ms).
 
 ## S3: esbuild-wasm in a Web Worker
 
