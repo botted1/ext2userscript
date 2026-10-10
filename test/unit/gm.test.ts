@@ -172,6 +172,17 @@ describe("createGm", () => {
     await assert.rejects(Promise.race([pending, timeout]), { name: "AbortError" });
   });
 
+  it("rejects an aborted request even when the manager's abort() throws", async () => {
+    const gm = createGm({ GM_xmlhttpRequest: () => ({ abort() { throw new Error("abort failed"); } }) });
+    // A real AbortSignal would report the throw from its listener as an uncaught exception, which node:test counts as a failure, so the test calls the listener itself.
+    let onAbort: (() => void) | undefined;
+    const signal = { aborted: false, addEventListener: (_type: string, listener: () => void) => { onAbort = listener; }, removeEventListener() {} } as unknown as AbortSignal;
+    const pending = gm.xmlHttpRequest({ url: "https://x/throws", signal });
+    try { onAbort?.(); } catch { /* the throw from abort() is expected */ }
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("still pending after 100 ms")), 100));
+    await assert.rejects(Promise.race([pending, timeout]), { name: "AbortError" });
+  });
+
   it("addElement passes the parent only when given one", async () => {
     const calls: unknown[][] = [];
     const gm = createGm({ GM_addElement: (...args: unknown[]) => { calls.push(args); return {} as Element; } });

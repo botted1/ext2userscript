@@ -221,11 +221,11 @@ export function createGm(api: GmApi = readManagerApi()): Gm {
           signal?.removeEventListener("abort", onAbort);
           action();
         };
-        // Rejects by itself, so an abort settles the request even if the manager's abort() never calls onabort.
+        // Rejects by itself, and before calling abort(), so an abort settles the request even if the manager's abort() never calls onabort or throws.
         const onAbort = () =>
           settle(() => {
-            control?.abort();
             reject(abortError());
+            control?.abort();
           });
         control = send({
           method: request.method ?? "GET",

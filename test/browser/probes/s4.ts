@@ -1,5 +1,6 @@
 // Spike S4 probe (spec §11): registry + bus + election on real pages, with scaled-down timings.
-// Reports on <html data-ready | data-leader | data-received | data-dropped | data-sent>.
+// Reports on <html data-ready | data-leader | data-received | data-delivered | data-dropped | data-sent>.
+// data-received counts distinct messages; data-delivered counts every delivery, so a duplicate shows as delivered > received.
 import { startBus } from "../../../src/runtime/bus.ts";
 import { startElection } from "../../../src/runtime/elect.ts";
 import { createGm } from "../../../src/runtime/gm.ts";
@@ -27,7 +28,9 @@ async function main() {
   });
 
   const received = new Set<string>();
+  let delivered = 0;
   bus.onMessage((payload, from) => {
+    html.setAttribute("data-delivered", String(++delivered));
     received.add(`${from}:${(payload as { n: number }).n}`);
     html.setAttribute("data-received", String(received.size));
     html.setAttribute("data-dropped", String(bus.dropped));

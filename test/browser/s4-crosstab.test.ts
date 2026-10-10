@@ -51,6 +51,12 @@ for (const backend of backendsFromEnv()) {
       }
     }
 
+    /** data-delivered counts every delivery, data-received only distinct messages. */
+    async function assertNoDuplicates(receiver: Page) {
+      const [delivered, received] = await Promise.all([readAttr(receiver, "data-delivered"), readAttr(receiver, "data-received")]);
+      assert.equal(delivered, received, "a message was delivered more than once");
+    }
+
     it("delivers 1,000 spaced messages and a 50-message burst without loss", async () => {
       const session = await startSession(backend, userscript);
       try {
@@ -59,9 +65,11 @@ for (const backend of backendsFromEnv()) {
         const sender = await open(session.context, `${siteA.origin}/s4.html?run=${run}&id=1&sendTo=2&count=1000&spacingMs=5`);
         await waitForAttr(sender, "data-sent", "1000", 90_000);
         await waitForAttr(receiver, "data-received", "1000", 15_000);
+        await assertNoDuplicates(receiver);
         assert.equal(await readAttr(receiver, "data-dropped"), "0");
         await open(session.context, `${siteA.origin}/s4.html?run=${run}&id=3&sendTo=2&count=50&spacingMs=0`);
         await waitForAttr(receiver, "data-received", "1050", 30_000);
+        await assertNoDuplicates(receiver);
         assert.equal(await readAttr(receiver, "data-dropped"), "0");
         console.log(`[${backend}] S4 messages: received ${await readAttr(receiver, "data-received")}, dropped ${await readAttr(receiver, "data-dropped")}`);
       } finally {

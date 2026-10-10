@@ -32,6 +32,7 @@ function whenParsed(callback: () => void) {
 
 /** Runs at document-start, which is best-effort: the manager starts it 16-46 ms after navigation start (spec §5.1 and S1). */
 function injectIntoPage() {
+  record("startMs", Math.round(performance.now())); // ms since navigation start; the release-tier log line re-measures spec S1's 16-46 ms
   record("startReadyState", document.readyState);
   const injected = gm.addElement(html, "script", {
     textContent: 'document.documentElement.setAttribute("data-x2u-sync", "1"); window.__x2uPageWorld = 1;',
