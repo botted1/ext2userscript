@@ -78,7 +78,8 @@ describe("cross-tab bus", () => {
   });
 
   it("delivers a new tab's first message to a tab that hasn't discovered it yet", async () => {
-    const hub = createHub({ delayMs: 20 });
+    // Coalesced: the roster and the outbox land in one batch, so only the catch-up read can deliver the message.
+    const hub = createHub({ delayMs: 20, coalesce: true });
     const a = await openTab(hub, 1);
     const b = await openTab(hub, 2);
     try {
@@ -111,7 +112,8 @@ describe("cross-tab bus", () => {
     }
   });
 
-  it("counts messages lost when a manager coalesces writes", async () => {
+  it("counts messages lost when a manager coalesces writes", async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
     const hub = createHub({ delayMs: 30, coalesce: true });
     const a = await openTab(hub, 1);
     const b = await openTab(hub, 2);
@@ -123,7 +125,9 @@ describe("cross-tab bus", () => {
       await eventually(() => b.got.length === 1 + RING_SIZE, 1_000);
       assert.equal(b.bus.dropped, 100 - RING_SIZE);
       assert.deepEqual(b.got.at(-1), { payload: 100, from: 1 });
+      assert.equal(warn.mock.callCount(), 1); // the gap is logged, once
     } finally {
+      warn.mock.restore();
       await closeAll(a, b);
     }
   });
@@ -163,6 +167,77 @@ describe("cross-tab bus", () => {
       await a.bus.send(2, "still works");
       await eventually(() => b.got.length === 1, 500);
       assert.deepEqual(b.got, [{ payload: "still works", from: 1 }]);
+    } finally {
+      await closeAll(a, b);
+    }
+  });
+
+  it("a stopped bus delivers nothing and refuses to send", async () => {
+    const hub = createHub();
+    const a = await openTab(hub, 1);
+    await a.bus.stop(); // stop the bus, but keep its registry running
+    const c = await openTab(hub, 3); // joins after a stopped
+    try {
+      await eventually(() => a.registry.live().some((t) => t.id === 3), 500);
+      await c.bus.send(1, "direct");
+      await c.bus.send("*", "broadcast");
+      await sleep(50);
+      assert.deepEqual(a.got, []);
+      await assert.rejects(a.bus.send(3, "nope"), /stopped/);
+    } finally {
+      await closeAll(c);
+      await a.registry.stop();
+    }
+  });
+
+  it("counts messages lost across a navigation", async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
+    const hub = createHub({ delayMs: 30, coalesce: true });
+    const a = await openTab(hub, 1);
+    const b = await openTab(hub, 2);
+    try {
+      await connected(a, b);
+      await a.bus.send(2, "before");
+      await eventually(() => b.got.length === 1, 500);
+      await a.bus.stop();
+      const next = await startBus(createGm(hub.tab()), "t", a.registry); // same tab id, fresh page: a new epoch
+      try {
+        for (let n = 1; n <= 100; n++) void next.send(2, n); // all land within one coalescing window
+        await eventually(() => b.got.length === 1 + RING_SIZE, 1_000);
+        assert.equal(b.bus.dropped, 100 - RING_SIZE);
+        assert.deepEqual(b.got.at(-1), { payload: 100, from: 1 });
+        assert.equal(warn.mock.callCount(), 1);
+      } finally {
+        await next.stop();
+      }
+    } finally {
+      warn.mock.restore();
+      await closeAll(b);
+      await a.registry.stop();
+    }
+  });
+
+  it("does not replay a returning epoch", async () => {
+    const hub = createHub();
+    const a = await openTab(hub, 1);
+    const b = await openTab(hub, 2);
+    try {
+      await connected(a, b);
+      await a.bus.send(2, "m1");
+      await a.bus.send(2, "m2");
+      await a.bus.send(2, "m3");
+      await eventually(() => b.got.length === 3, 500);
+      const next = await startBus(createGm(hub.tab()), "t", a.registry); // a second page takes the same tab id
+      try {
+        await next.send(2, "n1");
+        await eventually(() => b.got.length === 4, 500);
+        await a.bus.send(2, "m4"); // the first page returns from the back/forward cache and sends again
+        await eventually(() => b.got.length >= 5, 500);
+        await sleep(30);
+        assert.deepEqual(b.got.map((m) => m.payload), ["m1", "m2", "m3", "n1", "m4"]);
+      } finally {
+        await next.stop();
+      }
     } finally {
       await closeAll(a, b);
     }

@@ -11,6 +11,8 @@ type Outbox = { epoch: string; msgs: Envelope[] };
 /** An outbox keeps at most RING_SIZE messages, none older than RING_MAX_AGE_MS. */
 export const RING_SIZE = 64;
 export const RING_MAX_AGE_MS = 10_000;
+/** Epochs remembered per sender, so a page that returns from the back/forward cache is not replayed. */
+const EPOCHS_KEPT = 4;
 
 export type Bus = {
   /** Send to one tab, or "*" for every other tab. Sending to this tab delivers locally. */
@@ -39,14 +41,17 @@ export async function startBus(gm: Gm, ns: string, registry: Registry): Promise<
   const epoch = Math.random().toString(36).slice(2);
   const handlers: Array<(payload: unknown, from: number) => void> = [];
   const ring: Envelope[] = [];
-  // Per sender. Kept after a tab leaves, so a tab that comes back isn't replayed from the start.
-  const read = new Map<number, { epoch: string; seq: number }>();
-  const listening = new Map<number, Promise<number | string>>();
+  // Per sender, per epoch: the last seq delivered. Kept after a tab leaves, so a tab that comes back isn't replayed.
+  const read = new Map<number, Map<string, number>>();
+  // Per sender: this bus's listener on its outbox. Resolves to the listener id, or to undefined if registering failed.
+  const listening = new Map<number, Promise<number | string | undefined>>();
   let seq = 0;
   let dropped = 0;
   let warned = false;
+  let stopped = false;
 
   const deliver = (payload: unknown, from: number) => {
+    if (stopped) return;
     for (const fn of handlers) {
       try {
         fn(payload, from);
@@ -58,49 +63,78 @@ export async function startBus(gm: Gm, ns: string, registry: Registry): Promise<
 
   const receive = (from: number, value: unknown) => {
     const outbox = readOutbox(value);
-    if (!outbox) return;
-    const previous = read.get(from);
-    const continuing = previous !== undefined && previous.epoch === outbox.epoch ? previous.seq : undefined;
-    if (continuing !== undefined && outbox.msgs[0].seq > continuing + 1) {
-      dropped += outbox.msgs[0].seq - continuing - 1;
+    if (stopped || !outbox) return;
+    const epochs = read.get(from) ?? new Map<string, number>();
+    const seen = epochs.get(outbox.epoch);
+    // A sender heard from before counts a new epoch from 0. A sender heard from for the first time counts no gap.
+    const base = seen ?? (epochs.size > 0 ? 0 : undefined);
+    if (base !== undefined && outbox.msgs[0].seq > base + 1) {
+      dropped += outbox.msgs[0].seq - base - 1;
       if (!warned) {
         warned = true;
         console.warn(`[ext2userscript] missed cross-tab messages from tab ${from}: its outbox moved on before this tab read it`);
       }
     }
     for (const env of outbox.msgs) {
-      // Same epoch: anything newer than what was read. New epoch (the sender navigated): all of it.
-      // First contact: only what was sent after this tab started.
-      const fresh = continuing !== undefined ? env.seq > continuing : previous !== undefined || env.t >= startedAt;
+      // An epoch already read: anything newer than what was read. An epoch not read yet: only what was sent after this tab started.
+      const fresh = seen !== undefined ? env.seq > seen : env.t >= startedAt;
       if (fresh && (env.to === me || env.to === "*")) deliver(env.payload, from);
     }
-    read.set(from, { epoch: outbox.epoch, seq: outbox.msgs[outbox.msgs.length - 1].seq });
+    if (seen === undefined && epochs.size >= EPOCHS_KEPT) {
+      const oldest = epochs.keys().next().value;
+      if (oldest !== undefined) epochs.delete(oldest);
+    }
+    epochs.set(outbox.epoch, Math.max(seen ?? 0, outbox.msgs[outbox.msgs.length - 1].seq));
+    read.set(from, epochs);
   };
 
-  const listen = (id: number) => {
-    if (listening.has(id)) return;
-    listening.set(
-      id,
-      (async () => {
-        const listener = await gm.addValueChangeListener(k.out(id), (_key, _old, value) => receive(id, value));
-        receive(id, await gm.getValue(k.out(id))); // catch up on anything sent before this tab was listening
-        return listener;
-      })(),
-    );
+  // Removes a listener. Never rejects: a failure is logged.
+  const detach = async (listener: number | string) => {
+    try {
+      await gm.removeValueChangeListener(listener);
+    } catch (error) {
+      console.error("[ext2userscript] cannot remove a cross-tab listener", error);
+    }
   };
-  const unlisten = (id: number) => {
-    const listener = listening.get(id);
+  // Never rejects: a failure is logged, a listener added before the failure is removed, and the result is undefined.
+  const register = async (id: number): Promise<number | string | undefined> => {
+    let listener: number | string | undefined;
+    try {
+      listener = await gm.addValueChangeListener(k.out(id), (_key, _old, value) => receive(id, value));
+      receive(id, await gm.getValue(k.out(id))); // catch up on anything sent before this tab was listening
+      return listener;
+    } catch (error) {
+      console.error(`[ext2userscript] cannot listen to tab ${id}'s outbox`, error);
+      if (listener !== undefined) await detach(listener);
+      return undefined;
+    }
+  };
+  const listen = (id: number) => {
+    if (stopped || listening.has(id)) return;
+    const registration = register(id);
+    listening.set(id, registration);
+    // A failed registration is forgotten, so the next join for this tab retries it.
+    void registration.then((listener) => {
+      if (listener === undefined && listening.get(id) === registration) listening.delete(id);
+    });
+  };
+  const unlisten = async (id: number) => {
+    const registration = listening.get(id);
     listening.delete(id);
-    void listener?.then((l) => gm.removeValueChangeListener(l));
+    const listener = await registration;
+    if (listener !== undefined) await detach(listener);
   };
 
   registry.onAdded((tab) => listen(tab.id));
-  registry.onRemoved(unlisten);
+  registry.onRemoved((id) => {
+    if (!stopped) void unlisten(id);
+  });
   for (const tab of registry.live()) listen(tab.id);
   await Promise.all(listening.values());
 
   return {
     send: async (to, payload) => {
+      if (stopped) throw new Error("ext2userscript: the cross-tab bus has stopped");
       const copy: unknown = payload === undefined ? null : JSON.parse(JSON.stringify(payload));
       if (to === me) {
         queueMicrotask(() => deliver(copy, me));
@@ -118,7 +152,8 @@ export async function startBus(gm: Gm, ns: string, registry: Registry): Promise<
       return dropped;
     },
     stop: async () => {
-      for (const id of [...listening.keys()]) unlisten(id);
+      stopped = true;
+      await Promise.all([...listening.keys()].map((id) => unlisten(id)));
       await gm.deleteValue(k.out(me));
     },
   };
