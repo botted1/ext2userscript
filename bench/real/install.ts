@@ -2,7 +2,8 @@
 import type { BrowserContext, Locator } from "playwright";
 import { startServer } from "../../test/support/server.ts";
 
-const INSTALL_BUTTON = /^(install|reinstall|update|overwrite|confirm installation|confirm re-installation)$/i;
+// Violentmonkey appends its hotkey to the accessible name ("Install (⌘Enter)").
+const INSTALL_BUTTON = /^(install|reinstall|update|overwrite|confirm installation|confirm re-installation)( \(.*\))?$/i;
 
 /**
  * The install button on whichever page of the manager shows one. Every launch counts as a fresh install to
@@ -27,8 +28,12 @@ export async function installUserscript(context: BrowserContext, extensionId: st
   });
   try {
     const opener = await context.newPage();
-    void opener.goto(`${server.origin}/x2u-test.user.js`).catch(() => {}); // the manager takes over this navigation, so don't wait for it
-    const button = await findInstallButton(context, extensionId, 20_000);
+    // Tampermonkey takes several seconds after launch before it notices a .user.js navigation, and ignores earlier ones, so navigate again until an install button shows up.
+    let button: Locator | undefined;
+    for (let attempt = 0; attempt < 3 && !button; attempt++) {
+      void opener.goto(`${server.origin}/x2u-test.user.js`).catch(() => {}); // the manager takes over this navigation, so don't wait for it
+      button = await findInstallButton(context, extensionId, 10_000);
+    }
     if (!button) {
       const open = context.pages().map((page) => page.url()).join(", ");
       throw new Error(`The manager (${extensionId}) did not offer an install button for the userscript (open pages: ${open})`);

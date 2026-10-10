@@ -20,8 +20,18 @@ if (location.pathname === "/conformance-csp.html") strictCspPage();
 if (location.pathname === "/reader.html") void reader().catch(fail);
 if (location.pathname === "/writer.html") void gm.setValue(`conf:${params.get("token")}:remote`, "hello").catch(fail);
 
+/**
+ * A manager may start a document-start userscript only after the page has been parsed (spike S1), when DOMContentLoaded
+ * has already fired. Waiting for it then would hang the probe, so the probe runs at once and records what it saw.
+ */
+function whenParsed(callback: () => void) {
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", callback, { once: true });
+  else callback();
+}
+
 /** Runs at document-start, before the page's own scripts (spec §5.1 and S1). */
 function injectIntoPage() {
+  record("startReadyState", document.readyState);
   const injected = gm.addElement(html, "script", {
     textContent: 'document.documentElement.setAttribute("data-x2u-sync", "1"); window.__x2uPageWorld = 1;',
   });
@@ -34,21 +44,17 @@ function injectIntoPage() {
 
 function singlePage() {
   injectIntoPage();
-  document.addEventListener("DOMContentLoaded", () => void afterParse(), { once: true });
+  whenParsed(() => void afterParse());
 }
 
 /** The page's CSP only allows its own nonce'd script. All this page checks is whether the injection still got in first. */
 function strictCspPage() {
   injectIntoPage();
-  document.addEventListener(
-    "DOMContentLoaded",
-    () => {
-      record("pageSawSync", html.getAttribute("data-page-saw-sync"));
-      record("pageSawWorld", html.getAttribute("data-page-saw-world"));
-      record("done", true);
-    },
-    { once: true },
-  );
+  whenParsed(() => {
+    record("pageSawSync", html.getAttribute("data-page-saw-sync"));
+    record("pageSawWorld", html.getAttribute("data-page-saw-world"));
+    record("done", true);
+  });
 }
 
 async function afterParse() {
