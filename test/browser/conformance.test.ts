@@ -123,7 +123,7 @@ for (const backend of backendsFromEnv()) {
     });
 
     it(
-      "injects page-world scripts before the page's own scripts on a strict-CSP page",
+      "injects page-world scripts before a page script that runs ≥ 200 ms after navigation start, on a strict-CSP page",
       { skip: backend === "emulator" ? "the emulator doesn't bypass page CSP" : false },
       async () => {
         const session = await startSession(backend, userscript);

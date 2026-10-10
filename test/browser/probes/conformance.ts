@@ -21,8 +21,9 @@ if (location.pathname === "/reader.html") void reader().catch(fail);
 if (location.pathname === "/writer.html") void gm.setValue(`conf:${params.get("token")}:remote`, "hello").catch(fail);
 
 /**
- * A manager may start a document-start userscript only after the page has been parsed (spike S1), when DOMContentLoaded
- * has already fired. Waiting for it then would hang the probe, so the probe runs at once and records what it saw.
+ * A manager may start a document-start userscript after the page's first scripts, or after the page has been parsed
+ * (spike S1), when DOMContentLoaded has already fired. Waiting for it then would hang the probe, so the probe runs at
+ * once and records what it saw.
  */
 function whenParsed(callback: () => void) {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", callback, { once: true });

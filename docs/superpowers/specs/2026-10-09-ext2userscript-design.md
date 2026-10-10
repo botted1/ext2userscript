@@ -205,7 +205,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 
 - **Async-only interface:** `getValue`, `setValue`, `deleteValue`, `listValues`, `addValueChangeListener`, `removeValueChangeListener`, `registerMenuCommand`, `unregisterMenuCommand`, `xmlHttpRequest`, `addElement`, `openInTab`, `notification`, and `cookie` (list, set, delete). Every method returns a Promise.
 - **Capability flags:** `caps = { valueListeners, menus, cookies }`, detected at startup from which functions exist. On TM and VM, `valueListeners` and `menus` are true; `cookies` is true wherever the manager provides `GM_cookie` (TM, and VM since 2.35.1).
-- **One implementation, for TM and VM:** it wraps the synchronous `GM_*` functions that both managers provide. Each method makes its underlying call before its first `await`, so only the result is async. That keeps two timings intact: the registry cleanup written during `pagehide` (§5.3), and page-world scripts injected at `document_start` (§5.5).
+- **One implementation, for TM and VM:** it wraps the synchronous `GM_*` functions that both managers provide. Each method makes its underlying call before its first `await`, so only the result is async. That keeps two timings intact: the registry cleanup written during `pagehide` (§5.3), and page-world scripts injected at the userscript's own start time (§5.5), which is best-effort at `document_start` (see the revision below).
 - **No fallback code yet:**
   - `cookies` false: `chrome.cookies.*` rejects (§9).
   - `menus` false: anything that needs a menu entry rejects the same way.
@@ -221,6 +221,8 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
   - Content scripts keep the page's real `localStorage`, as in a real extension.
   - Ceiling: code that writes `window.localStorage` explicitly still reaches the site's storage. Upgrade path: a `window` proxy, if the benchmark shows it matters.
 - **CI:** the emulator (§10.2) provides exactly the `GM_*` functions in the grant table, so CI runs the real `gm.ts`.
+
+**Revision (S1):** `document_start` is best-effort. Tampermonkey 5.5.1 and Violentmonkey 2.49.0 start a `document-start` userscript 16–46 ms after navigation start, whatever `@sandbox`, `@inject-into` or `@grant` say. A page script that runs earlier wins. The "call before the first `await`" rule still holds and still matters: it keeps `gm.addElement` synchronous, so a page-world script runs at the userscript's own start time. The release-tier conformance test pins this weaker contract: the injection must beat a page script that runs at least 200 ms after navigation start.
 
 ### 5.2 API support table (v1)
 
@@ -287,15 +289,19 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
   - The runtime patches `Node.prototype.appendChild`, `insertBefore`, `append` and `prepend` in the content context. When one of them inserts a `<script>` whose `src` is one of our asset blob URLs, it swaps in `gm.addElement`.
   - Page-context scripts get no `chrome` object, which matches how real extensions behave.
 
+**Revision (S1):** `world: "MAIN"` and `document_start` groups run when the manager starts the userscript, not guaranteed before the page's first scripts. With GM functions granted, the script is isolated whatever the header, so `gm.addElement` is the only route into the page world. It runs synchronously and gets past a nonce-only CSP on both managers. The report marks `run_at: document_start` as **partial** ("best-effort: may run after the page's earliest scripts").
+
 ## 6. Popup and options pages
 - **Opening:** "Open <name>" and "<name> options" menu commands (plus `action.onClicked`, `runtime.openOptionsPage` and `action.openPopup`) open a modal. The modal lives in a closed shadow root and contains a same-origin `about:blank` iframe.
 - **Filling the iframe:**
-  - The page's HTML is parsed with `DOMParser` and its body and head nodes are imported into the iframe document.
+  - The page's HTML is parsed at build time. The runtime builds the body and head nodes in the iframe document with `createElement`, `setAttribute` and `append` (see the revision below).
   - `<link rel=stylesheet>` and `<style>` become `gm.addElement(iframeDoc.head, 'style', {textContent})`, which gets past CSP rules that block inline styles.
   - Assets are rewritten to blob URLs.
 - **Scripts:** the page's scripts are not inserted as `<script>` elements. The bundled UI code runs inside the userscript, with its wrapper parameters bound to the iframe's `window`/`document`, and the page's CSP doesn't apply to it. `DOMContentLoaded` and `load` are dispatched to the iframe's window after insertion.
 - **Size:** the popup modal sizes itself to the content (max 800×600). The options page opens as a larger modal.
-- **Known ceiling:** sites whose CSP blocks `blob:` or `data:` in `img-src`/`font-src` may still lose images and fonts in the modal. The report adds a warning when the UI uses them. Spike S2 measures this on GitHub, YouTube and X.
+- **Known ceiling:** sites whose CSP blocks `blob:` or `data:` in `img-src`/`font-src` may still lose images and fonts in the modal. The report adds a warning when the UI uses them. Spike S2 measured this on GitHub, YouTube and X and saw no asset failures, even where `font-src` omits `blob:` (GitHub, X) or `data:` (GitHub). The cause wasn't investigated, so the warning stays.
+
+**Revision (S2):** On a site that sends `require-trusted-types-for 'script'` (YouTube), Tampermonkey 5.5.1 throws on `innerHTML` (on the iframe's body) and on `DOMParser.parseFromString`. Violentmonkey 2.49.0 allows both. The cause wasn't investigated. So the converter parses popup and options HTML at build time, and the runtime builds the iframe DOM with `createElement`, `setAttribute` and `append`, with no `DOMParser` step. Extension UI code that itself assigns HTML strings (`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `DOMParser`, `document.write`) still throws on such sites under Tampermonkey. The analyzer flags these sinks, and the report warns: "popup may break on sites that enforce Trusted Types, under Tampermonkey". Upgrade path, not measured: a pass-through `default` Trusted Types policy in the iframe's realm.
 
 ## 7. CLI
 
@@ -368,12 +374,14 @@ Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`l
 
 ## 11. Early spikes (plan phase 0, before the main build)
 
-| # | Question | Pass condition |
-|---|---|---|
-| S1 | With `@sandbox DOM` (TM) and `@inject-into content` (VM): is every `GM_*` function in `gm.ts`'s grant table still available, does `gm.addElement` run a page-world script synchronously, and are content scripts isolated from page globals? | All available in both managers; an injected script runs before the next page script; page globals are not visible |
-| S2 | Popup modal on strict-CSP sites (GitHub, YouTube, X): do the `about:blank` iframe plus userscript-context JS plus `gm.addElement` styles work, and which asset types fail? | JS runs and styles apply on all three. Failing asset types are recorded as report warnings. |
-| S3 | Can `esbuild-wasm`, with the virtual-fs plugin, bundle a real MV3 module service worker (Refined GitHub, whose manifest declares `type: "module"`; LeetCode Enhancer's WXT build doesn't use a module worker) inside a Web Worker in current Chrome, Firefox and Safari? | The bundle is byte-identical to native esbuild's output; the first conversion takes under 10s on a laptop |
-| S4 | Leader election and outbox protocol under churn in real TM and VM (not just the emulator) | No double leader after settling; no lost messages over 1,000 sends |
+| # | Question | Pass condition | Result |
+|---|---|---|---|
+| S1 | With `@sandbox DOM` (TM) and `@inject-into content` (VM): is every `GM_*` function in `gm.ts`'s grant table still available, does `gm.addElement` run a page-world script synchronously, and are content scripts isolated from page globals? | All available in both managers; an injected script runs before the next page script; page globals are not visible | FAIL: TM 5.5.1 and VM 2.49.0 start a `document-start` script 16–46 ms after navigation start, after the page's first script on a fast page. The GM functions, synchronous `addElement` and isolation all pass. PASS against the best-effort contract (beat a page script that runs ≥ 200 ms after navigation start). See the §5.1 and §5.5 revisions. |
+| S2 | Popup modal on strict-CSP sites (GitHub, YouTube, X): do the `about:blank` iframe plus userscript-context JS plus `gm.addElement` styles work, and which asset types fail? | JS runs and styles apply on all three. Failing asset types are recorded as report warnings. | PASS: JS ran and styles applied on all three sites, on TM 5.5.1 and VM 2.49.0 (X headed only). No asset type failed. `DOMParser` and `innerHTML` throw on YouTube under TM (Trusted Types); see the §6 revision. |
+| S3 | Can `esbuild-wasm`, with the virtual-fs plugin, bundle a real MV3 module service worker (Refined GitHub, whose manifest declares `type: "module"`; LeetCode Enhancer's WXT build doesn't use a module worker) inside a Web Worker in current Chrome, Firefox and Safari? | The bundle is byte-identical to native esbuild's output; the first conversion takes under 10s on a laptop | PASS on Chromium and WebKit: byte-identical, 370–474 ms. Firefox pending CI (it doesn't launch on macOS 27 with Playwright's Firefox build 1555). WebKit is not shipping Safari. |
+| S4 | Leader election and outbox protocol under churn in real TM and VM (not just the emulator) | No double leader after settling; no lost messages over 1,000 sends | PASS: TM 5.5.1 and VM 2.49.0 each received 1,050 of 1,050 messages and had one leader after 9 of 9 settle checks. |
+
+Details: docs/superpowers/spikes/2026-10-09-plan1-findings.md
 
 If a spike fails, its section of this spec is revised before implementation continues.
 
