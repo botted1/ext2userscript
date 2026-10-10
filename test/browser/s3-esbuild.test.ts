@@ -19,7 +19,16 @@ const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE_PATH = join(ROOT, "bench", ".cache", "fixtures", `${FIXTURE.cwsId}.crx`);
 const PAGE = `<!doctype html><html><head><title>s3</title><script type="module">
 const worker = new Worker("/worker.js", { type: "module" });
-window.runS3 = (job) => new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); worker.postMessage(job); });
+// Listen from the start: a worker that fails to load reports before runS3 is called.
+const failed = new Promise((resolve) => {
+  worker.onerror = (event) => resolve({ error: "worker error: " + (event.message || "the worker failed to load or start") });
+  worker.onmessageerror = () => resolve({ error: "the worker's reply could not be deserialised" });
+});
+window.runS3 = (job) => Promise.race([
+  new Promise((resolve) => { worker.onmessage = (event) => resolve(event.data); worker.postMessage(job); }),
+  failed,
+  new Promise((resolve) => setTimeout(resolve, 30000, { error: "no reply from the worker within 30s" })),
+]);
 </script></head><body>s3</body></html>`;
 
 async function fixture(): Promise<Uint8Array<ArrayBuffer>> {
@@ -65,7 +74,7 @@ describe(`S3: esbuild-wasm bundles ${FIXTURE.name}'s module service worker in a 
 
   const browsers: Array<[string, BrowserType]> = [["chromium", chromium], ["firefox", firefox], ["webkit", webkit]];
   for (const [name, type] of browsers) {
-    it(`${name}: byte-identical to native esbuild, first run under 10s`, async () => {
+    it(`${name}: byte-identical to native esbuild, first run under 10s`, { timeout: 60_000 }, async () => {
       const browser = await type.launch();
       try {
         const tab = await browser.newPage();
