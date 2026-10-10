@@ -3,6 +3,7 @@
 // the other pages asynchronously with remote: true, as with a real manager.
 import { build } from "esbuild";
 import type { BrowserContext, Page } from "playwright";
+import { scopeStrictMode } from "../../src/convert/runtime-node.ts";
 import { parseMeta } from "./meta.ts";
 import type { Hooks } from "./page.ts";
 
@@ -34,7 +35,7 @@ function bundlePage(): Promise<string> {
     platform: "browser",
     target: "es2020",
     write: false,
-  }).then((result) => result.outputFiles[0].text);
+  }).then((result) => scopeStrictMode(result.outputFiles[0].text)); // a manager runs userscripts sloppy, so this must not make them strict
   return pageBundle;
 }
 
