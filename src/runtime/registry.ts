@@ -40,6 +40,9 @@ export async function startRegistry(
   me: number,
   describe: () => { url: string; title: string },
   timing: RegistryTiming = REGISTRY_TIMING,
+  reportError: (error: unknown) => void = (error) => queueMicrotask(() => {
+    throw error;
+  }),
 ): Promise<Registry> {
   const k = keys(ns);
   const known = new Map<number, TabInfo>();
@@ -48,23 +51,38 @@ export async function startRegistry(
   const changes: Array<() => void> = [];
   let since = Date.now();
   let present = true;
+  let lastScan = Date.now();
+  let awakeSince = -Infinity;
 
-  const changed = () => {
-    for (const fn of changes) fn();
+  // A subscriber's error goes to reportError, so it neither stops the others nor aborts the pass.
+  const notify = <A extends unknown[]>(subscribers: Array<(...args: A) => void>, ...args: A) => {
+    for (const fn of subscribers) {
+      try {
+        fn(...args);
+      } catch (error) {
+        reportError(error);
+      }
+    }
   };
+  const changed = () => notify(changes);
   const beat = () => gm.setValue(k.tab(me), { ...describe(), since, ts: Date.now() });
   const ring = () => gm.setValue(k.roster, { from: me, t: Date.now() });
 
   const scanOnce = async () => {
     const now = Date.now();
+    // After a gap longer than staleMs (a sleep, a frozen tab), peers could not beat. Each gets staleMs from this wake-up.
+    if (now - lastScan > timing.staleMs) awakeSince = now;
+    lastScan = now;
     const seen = new Set<number>();
     let dirty = false;
     for (const key of await gm.listValues()) {
       if (!key.startsWith(k.tabPrefix)) continue;
-      const id = Number(key.slice(k.tabPrefix.length));
-      if (!Number.isInteger(id) || id === me) continue;
+      const suffix = key.slice(k.tabPrefix.length);
+      const id = Number(suffix);
+      // Only canonical ids count, so an alias such as "tab:02" cannot clean up tab 2's outbox.
+      if (!Number.isInteger(id) || String(id) !== suffix || id === me) continue;
       const value = await gm.getValue(key);
-      if (!isBeat(value) || now - value.ts > timing.staleMs) {
+      if (!isBeat(value) || now - Math.max(value.ts, awakeSince) > timing.staleMs) {
         // Gone, or not a value this runtime wrote: clean up after it.
         await gm.deleteValue(key);
         await gm.deleteValue(k.out(id));
@@ -76,7 +94,7 @@ export async function startRegistry(
       known.set(id, info);
       if (!previous) {
         dirty = true;
-        for (const fn of added) fn(info);
+        notify(added, info);
       } else if (previous.since !== info.since) {
         dirty = true;
       }
@@ -85,33 +103,36 @@ export async function startRegistry(
       if (seen.has(id)) continue;
       known.delete(id);
       dirty = true;
-      for (const fn of removed) fn(id);
+      notify(removed, id);
     }
     if (dirty) changed();
   };
 
-  // One scan at a time; a request that arrives mid-scan runs one more pass afterwards.
-  let scanning = false;
+  // A call that arrives mid-pass shares its promise and gets one more full pass after it.
+  let running: Promise<void> | undefined;
   let again = false;
-  const scan = async () => {
-    if (scanning) {
+  const scan = (): Promise<void> => {
+    if (running) {
       again = true;
-      return;
+      return running;
     }
-    scanning = true;
-    try {
-      do {
-        again = false;
-        await scanOnce();
-      } while (again);
-    } finally {
-      scanning = false;
-    }
+    running = (async () => {
+      try {
+        do {
+          again = false;
+          await scanOnce();
+        } while (again);
+      } finally {
+        running = undefined;
+      }
+    })();
+    return running;
   };
 
   await beat();
+  // Scan in a microtask: the hub may still be applying a batch key by key, and the scan must see all of it.
   const rosterListener = await gm.addValueChangeListener(k.roster, () => {
-    void scan();
+    queueMicrotask(() => void scan());
   });
   await ring();
   await scan();
@@ -134,9 +155,12 @@ export async function startRegistry(
     },
     leave: async () => {
       present = false;
-      changed();
-      await gm.deleteValue(k.tab(me));
-      await ring();
+      try {
+        await gm.deleteValue(k.tab(me));
+        await ring();
+      } finally {
+        changed();
+      }
     },
     rejoin: async () => {
       present = true;
