@@ -173,8 +173,12 @@ export async function startRegistry(
     stop: async () => {
       clearInterval(timer);
       present = false;
-      await gm.removeValueChangeListener(rosterListener);
-      await gm.deleteValue(k.tab(me));
+      try {
+        await gm.removeValueChangeListener(rosterListener);
+        await gm.deleteValue(k.tab(me));
+      } finally {
+        changed();
+      }
     },
   };
 }
