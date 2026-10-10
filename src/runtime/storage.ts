@@ -123,9 +123,9 @@ export function createStorage(gm: Gm, ns: string, log: Logger) {
         for (const key of await gm.listValues()) if (key.startsWith(prefix)) await gm.deleteValue(key);
       }),
       onChanged: areaChanged[name].event,
-    });
+    }, ["getBytesInUse", "getKeys", "setAccessLevel"]);
   };
 
-  const managed = withFallback(log, "storage.managed", {});
-  return withFallback(log, "storage", { local: area("local"), sync: area("sync"), session: area("session"), managed, onChanged: onChanged.event });
+  const managed = withFallback(log, "storage.managed", {}, ["get", "getBytesInUse", "getKeys", "onChanged"]);
+  return withFallback(log, "storage", { local: area("local"), sync: area("sync"), session: area("session"), managed, onChanged: onChanged.event }, []);
 }

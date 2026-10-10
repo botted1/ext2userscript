@@ -97,9 +97,17 @@ describe("createEvent", () => {
 });
 
 describe("withFallback", () => {
+  it("fakes only the members it's told Chrome has, so feature detection sees what a content script would", () => {
+    const runtime = withFallback(recorder(), "runtime", { id: "abc" }, ["sendMessage", "onMessage"]) as Record<string, unknown>;
+    assert.equal(typeof runtime.sendMessage, "function");
+    assert.equal(typeof runtime.onMessage, "object");
+    assert.equal(runtime.getBackgroundPage, undefined);
+    assert.equal("getBackgroundPage" in runtime, false);
+  });
+
   it("keeps implemented members and rejects unknown ones with a named error, logged once", async () => {
     const log = recorder();
-    const runtime = withFallback(log, "runtime", { id: "abc" }) as Record<string, unknown> & { id: string };
+    const runtime = withFallback(log, "runtime", { id: "abc" }, ["sendMessage"]) as Record<string, unknown> & { id: string };
     assert.equal(runtime.id, "abc");
     const send = runtime.sendMessage as (...args: unknown[]) => Promise<unknown>;
     await assert.rejects(send({}), /ext2userscript: chrome\.runtime\.sendMessage is not available in userscripts/);
@@ -108,21 +116,21 @@ describe("withFallback", () => {
   });
 
   it("calls back with lastError when an unknown method gets a callback", async () => {
-    const runtime = withFallback(recorder(), "runtime", {}) as Record<string, (...args: unknown[]) => unknown>;
+    const runtime = withFallback(recorder(), "runtime", {}, ["sendMessage"]) as Record<string, (...args: unknown[]) => unknown>;
     const message = await new Promise((resolve) => runtime.sendMessage({}, () => resolve(readLastError()?.message)));
     assert.match(String(message), /chrome\.runtime\.sendMessage is not available/);
   });
 
   it("gives unknown events an addListener that logs and never fires", () => {
     const log = recorder();
-    const runtime = withFallback(log, "runtime", {}) as Record<string, { addListener(fn: () => void): void; hasListeners(): boolean }>;
+    const runtime = withFallback(log, "runtime", {}, ["onMessage"]) as Record<string, { addListener(fn: () => void): void; hasListeners(): boolean }>;
     runtime.onMessage.addListener(() => {});
     assert.match(log.lines[0], /chrome\.runtime\.onMessage is not available in userscripts; the listener will never be called/);
     assert.equal(runtime.onMessage.hasListeners(), false);
   });
 
   it("doesn't fake then or toJSON, so a namespace never looks like a promise", async () => {
-    const storage = withFallback(recorder(), "storage", { local: 1 });
+    const storage = withFallback(recorder(), "storage", { local: 1 }, []);
     assert.equal((storage as Record<string, unknown>).then, undefined);
     assert.equal(await Promise.resolve(storage), storage);
     assert.equal(JSON.stringify(storage), '{"local":1}');

@@ -96,17 +96,17 @@ export function createEvent<F extends (...args: never[]) => unknown>(log: Logger
 
 export const unavailable = (api: string) => new Error(`ext2userscript: chrome.${api} is not available in userscripts`);
 
-/** Properties a namespace object must not fake: `then` would make it look like a promise, `toJSON` would change JSON output. */
-const NEVER_FAKED = new Set(["then", "toJSON"]);
-
 /**
- * Wraps a namespace so that members it doesn't implement fail with a named error, logged once (spec §9): an event's
- * addListener logs that the listener will never be called, and a method rejects or calls back with lastError set.
+ * Wraps a namespace so that the members Chrome gives content scripts but this version doesn't implement (faked) fail
+ * with a named error, logged once (spec §9): an event's addListener logs that the listener will never be called, and a
+ * method rejects or calls back with lastError set. Any other missing member is undefined, as in Chrome, so feature
+ * detection takes the content-script path.
  */
-export function withFallback<T extends object>(log: Logger, namespace: string, members: T): T {
+export function withFallback<T extends object>(log: Logger, namespace: string, members: T, faked: readonly string[]): T {
   return new Proxy(members, {
+    has: (target, property) => property in target || (typeof property === "string" && faked.includes(property)),
     get(target, property, receiver) {
-      if (typeof property === "symbol" || property in target || NEVER_FAKED.has(property)) return Reflect.get(target, property, receiver);
+      if (typeof property === "symbol" || property in target || !faked.includes(property)) return Reflect.get(target, property, receiver);
       const api = `${namespace}.${property}`;
       if (/^on[A-Z]/.test(property)) {
         return {

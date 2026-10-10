@@ -4,7 +4,10 @@ import type { GmMethod } from "../runtime/gm.ts";
 import type { Model } from "./manifest.ts";
 import type { Context, ReportEntry, Status } from "./report.ts";
 import type { ScanResult } from "./scan.ts";
-import { CONTENT_APIS, CONTENT_NAMESPACES, UNSUPPORTED_MANIFEST_KEYS } from "./support.ts";
+import { CONTENT_APIS, CONTENT_NAMESPACES, STORAGE_AREA_MEMBERS, STORAGE_AREAS, UNSUPPORTED_MANIFEST_KEYS } from "./support.ts";
+
+/** An extension page: getURL or web_accessible_resources naming an .html or .htm file. */
+const PAGE = /\.html?(?:$|[?#])/i;
 
 /**
  * scans has one entry per content group, in manifest order: the group's scanned code, or undefined for a group without
@@ -22,8 +25,12 @@ export function analyze(model: Model, scans: ReadonlyArray<ScanResult | undefine
   for (const scan of scans) {
     if (!scan) continue;
     for (const chain of scan.chains) {
-      const [, namespace, member] = chain.split(".");
+      const [, namespace, member, areaMember] = chain.split(".");
       if (member === undefined || !CONTENT_NAMESPACES.has(namespace)) continue;
+      if (namespace === "storage" && STORAGE_AREAS.has(member) && areaMember !== undefined && !STORAGE_AREA_MEMBERS.has(areaMember)) {
+        add(`chrome.storage.${member}.${areaMember}`, "unsupported", "not implemented yet", "content");
+        continue;
+      }
       const support = CONTENT_APIS[`${namespace}.${member}`];
       if (!support) continue;
       add(`chrome.${namespace}.${member}`, support.status, support.reason, "content");
@@ -31,6 +38,10 @@ export function analyze(model: Model, scans: ReadonlyArray<ScanResult | undefine
     }
     if (scan.dynamicImport) add("import()", "partial", "dynamic import() isn't bundled in content scripts", "content");
   }
+
+  // A page served from a blob: URL has no chrome object and its relative URLs break, so it is not "supported".
+  const pages = [...new Set([...scans.flatMap((scan) => scan?.urls ?? []), ...model.webAccessibleResources].filter((path) => PAGE.test(path)))];
+  if (pages.length > 0) add("extension pages", "unsupported", `extension pages (${pages.join(", ")}) aren't converted yet`, "page");
 
   const groups = model.contentScripts;
   if (groups.some((group) => group.runAt === "document_start")) {

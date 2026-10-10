@@ -7,7 +7,11 @@ import type { Context, Status } from "./report.ts";
 export type Support = { status: Status; reason?: string; methods?: readonly GmMethod[] };
 
 /** The namespaces Chrome gives content scripts. Other chrome.* names don't exist there, so the analyzer skips them. */
-export const CONTENT_NAMESPACES: ReadonlySet<string> = new Set(["runtime", "storage", "i18n", "extension"]);
+export const CONTENT_NAMESPACES: ReadonlySet<string> = new Set(["runtime", "storage", "i18n", "extension", "dom"]);
+
+/** Storage areas, and the members src/runtime/storage.ts implements on them. Any other member is reported unsupported. */
+export const STORAGE_AREAS: ReadonlySet<string> = new Set(["local", "sync", "session"]);
+export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "set", "remove", "clear", "onChanged"]);
 
 const NO_BACKGROUND = "messaging with the background isn't converted yet";
 
@@ -37,6 +41,7 @@ export const CONTENT_APIS: Readonly<Record<string, Support>> = {
   "extension.inIncognitoContext": { status: "supported" },
   "extension.sendRequest": { status: "unsupported", reason: NO_BACKGROUND },
   "extension.onRequest": { status: "unsupported", reason: NO_BACKGROUND },
+  "dom.openOrClosedShadowRoot": { status: "unsupported", reason: "a userscript can't reach closed shadow roots" },
 };
 
 /** Manifest keys for browser features a userscript can't provide. The extension relies on them like on its background. */

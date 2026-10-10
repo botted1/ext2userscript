@@ -16,7 +16,8 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[]): void {
       log.error(`${gm.handler} isn't supported: ext2userscript supports Tampermonkey and Violentmonkey`);
       return;
     }
-    const i18n = withFallback(log, "i18n", createI18n(config, log));
+    // Each namespace fakes the content-script members Chrome has and this version doesn't implement yet.
+    const i18n = withFallback(log, "i18n", createI18n(config, log), ["detectLanguage"]);
     const assets = createAssets(config.assets, config.id, i18n.getMessage, log);
     const getURL = (path: string) => assets.url(path);
     const runtime = withFallback(log, "runtime", {
@@ -26,16 +27,17 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[]): void {
       },
       getURL,
       getManifest: () => structuredClone(config.manifest),
-    });
+    }, ["sendMessage", "connect", "onMessage", "onConnect"]);
     const extension = withFallback(log, "extension", {
       getURL,
       inIncognitoContext: false,
       get lastError() {
         return readLastError();
       },
-    });
+    }, ["sendRequest", "onRequest"]);
+    const dom = withFallback(log, "dom", {}, ["openOrClosedShadowRoot"]);
     // The namespaces Chrome gives content scripts. chrome.tabs and the rest are undefined there, as in Chrome.
-    const chrome = { runtime, storage: createStorage(gm, config.ns, log), i18n, extension };
+    const chrome = { runtime, storage: createStorage(gm, config.ns, log), i18n, extension, dom };
     runContent(config, code, { gm, chrome, assets, log });
   } catch (error) {
     log.error("couldn't start:", error);

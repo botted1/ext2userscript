@@ -20,6 +20,20 @@ describe("analyze", () => {
     ]);
   });
 
+  it("reports storage-area members the runtime lacks, chrome.dom, and extension pages, instead of claiming them", () => {
+    const code = "chrome.storage.local.getBytesInUse(); chrome.storage.sync.QUOTA_BYTES; chrome.storage.local.get(); chrome.dom.openOrClosedShadowRoot(el); chrome.runtime.getURL('panel.html');";
+    const { entries } = analyze(model({ content_scripts: [group], web_accessible_resources: ["frame.htm", "img/*"] }), [scan(code)]);
+    assert.deepEqual(entries.map((entry) => [entry.subject, entry.status, entry.contexts]), [
+      ["chrome.storage.local.getBytesInUse", "unsupported", ["content"]],
+      ["chrome.storage.sync.QUOTA_BYTES", "unsupported", ["content"]],
+      ["chrome.storage.local", "supported", ["content"]],
+      ["chrome.dom.openOrClosedShadowRoot", "unsupported", ["content"]],
+      ["chrome.runtime.getURL", "supported", ["content"]],
+      ["extension pages", "unsupported", ["page"]],
+    ]);
+    assert.equal(entries[5].reason, "extension pages (panel.html, frame.htm) aren't converted yet");
+  });
+
   it("flags document_start, about:blank frames and dynamic import()", () => {
     const { entries } = analyze(model({ content_scripts: [{ ...group, run_at: "document_start", match_about_blank: true }] }), [scan("import('./x.js')")]);
     assert.deepEqual(entries.map((entry) => [entry.subject, entry.status]), [

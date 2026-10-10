@@ -118,8 +118,10 @@ describe("chrome.storage", () => {
     assert.deepEqual(events, ["session:s"]);
   });
 
-  it("rejects an unknown member with a named error", async () => {
-    const storage = tab(createHub()) as unknown as { managed: { get(): Promise<unknown> } };
+  it("rejects the members Chrome has but this version doesn't, with a named error, and has no others", async () => {
+    const storage = tab(createHub()) as unknown as { managed: { get(): Promise<unknown> }; local: Record<string, unknown> };
     await assert.rejects(storage.managed.get(), /chrome\.storage\.managed\.get is not available/);
+    await assert.rejects((storage.local.getBytesInUse as () => Promise<unknown>)(), /chrome\.storage\.local\.getBytesInUse is not available/);
+    assert.equal(storage.local.notAMember, undefined);
   });
 });
