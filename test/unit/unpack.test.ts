@@ -100,8 +100,8 @@ describe("unpack", () => {
     assert.throws(() => unpack(patchCentral(zip({ "manifest.json": "{}" }), 24, 0x40000000)), /too large to unpack/);
   });
 
-  it("counts stored entries by their compressed size", () => {
+  it("rejects a stored entry that claims more data than the archive holds", () => {
     const stored = zipSync({ "manifest.json": strToU8("{}") }, { level: 0 });
-    assert.throws(() => unpack(patchCentral(patchCentral(stored, 20, 0x40000000), 24, 0)), /too large to unpack/);
+    assert.throws(() => unpack(patchCentral(patchCentral(stored, 20, 0x40000000), 24, 0)), /Corrupt or truncated archive \(manifest\.json is cut short\)/);
   });
 });
