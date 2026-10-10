@@ -12,6 +12,7 @@
     "test:browser": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"test/browser/**/*.test.ts\"",
     "test:file": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test --test-concurrency=1",
     "script": "node --experimental-strip-types --disable-warning=ExperimentalWarning",
+    "cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts",
     "typecheck": "tsc -p .",
     "bench:setup": "node --experimental-strip-types --disable-warning=ExperimentalWarning bench/real/setup.ts"
   },
