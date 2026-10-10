@@ -151,17 +151,16 @@ Fixture: Refined GitHub 26.10 (`hlepfoohegkhhmjieoechaddaejaokhf`), declared as 
 | Browser | Byte-identical to native | First conversion (ms) |
 |---|---|---|
 | Chromium | yes (SHA-256 `8d15bb6c…cdf1d`, 136,017 bytes) | 474 (a second run: 460) |
-| Firefox | not answered here: it doesn't launch on macOS 27 with Playwright's Firefox build 1555 (see below) | not run |
+| Firefox | yes (same SHA-256 and size), in CI only: Firefox 157.0 (Playwright build 1555) on ubuntu-latest (see below) | 750 (CI runner) |
 | WebKit | yes (same SHA-256 and size) | 402 (a second run: 370) |
 
 WebKit is Playwright's WebKit build, not the shipping Safari.
 
-Firefox: `firefox.launch()` exits at once with `Could not find profile folder.`, before any page loads, for every profile location tried (Playwright's temp profile, a scratch folder, a folder in the worktree) and with `MOZ_LEGACY_PROFILES=1`. That is an environment problem, not an S3 result. The same failure (`Could not find profile folder.`, with Chromium and WebKit passing) reproduced in a plain terminal outside the sandbox the earlier runs used, so the sandbox is not the cause. The Firefox test runs in CI (ubuntu-latest).
+Firefox: `firefox.launch()` exits at once with `Could not find profile folder.`, before any page loads, for every profile location tried (Playwright's temp profile, a scratch folder, a folder in the worktree) and with `MOZ_LEGACY_PROFILES=1`. That is an environment problem, not an S3 result. The same failure (`Could not find profile folder.`, with Chromium and WebKit passing) reproduced in a plain terminal outside the sandbox the earlier runs used, so the sandbox is not the cause. On ubuntu-latest, the same Playwright build launched and passed in CI (botted1/ext2userscript PR #1, run 38061827492). On that runner Chromium took 1,011.5 ms and WebKit 930 ms, all three with the same SHA-256.
 
-**Result:** PASS on Chromium and WebKit; Firefox is not answered here and is pending CI.
+**Result:** PASS on all three browsers (Firefox measured in CI on Linux).
 - PASS needs all three rows byte-identical and under 10,000 ms.
-- Chromium and WebKit pass, with the first conversion about 20x under the budget. esbuild-wasm with `worker: false` inside a module Web Worker bundles Refined GitHub identically to native esbuild.
-- If Firefox fails in CI, record which part failed and what it implies for spec §8, the web app.
+- All three pass, with the first conversion at least 10x under the budget (370–474 ms locally, 750–1,012 ms on the CI runner). esbuild-wasm with `worker: false` inside a module Web Worker bundles Refined GitHub identically to native esbuild.
 
 ## S2: popup modal on strict-CSP sites
 
@@ -210,5 +209,5 @@ CSP each row got (from the response headers; abbreviated, all lists of hosts sho
 |---|---|---|
 | S1 | FAIL against the original contract (`document-start` runs before every page script); PASS against the best-effort contract (S1 re-run) | §5.1, §5.5, §11 |
 | S2 | PASS on all six rows (x.com headed only) | §6: the "parsed with `DOMParser`" step throws on YouTube under Tampermonkey (Trusted Types) |
-| S3 | PASS on Chromium and WebKit (byte-identical, well under 10 s). Firefox is not answered here: it doesn't launch on macOS 27 with Playwright's Firefox build 1555, an environment problem rather than an S3 result. CI (ubuntu-latest) answers it. WebKit is not shipping Safari. | none |
+| S3 | PASS on Chromium, Firefox and WebKit (byte-identical, well under 10 s). Firefox was measured in CI on ubuntu-latest, because Playwright's Firefox build 1555 doesn't launch on macOS 27. WebKit is not shipping Safari. | none |
 | S4 | PASS (Tampermonkey and Violentmonkey: 1,050 received, 0 dropped; 9 of 9 settle checks with one leader) | none |
