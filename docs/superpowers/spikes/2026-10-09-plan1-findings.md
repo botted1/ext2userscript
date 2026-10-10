@@ -42,6 +42,49 @@ What the run shows:
 - **§5.1 gm.ts contract:** the GM functions, value-change delivery (local and remote) and `addElement` behave as the contract says. The "document-start runs before page scripts" part of the contract does not hold on either manager.
 - **§4 isolation headers:** not affected. Content scripts did not see page globals on either manager.
 
+### S1 follow-up: document-start variants
+
+The S1 failure raised the question of whether any header and `@grant` combination starts a `document-start` userscript before the page's own scripts. A scratch probe (not committed) installed 16 variants, 8 per manager, each with `@run-at document-start`: with the GM functions from gm.ts's grant table and with `@grant none`, each under four header sets. Every variant ran on two kinds of local page, no CSP: a **fast page**, whose first inline `<head>` script is the first thing the parser reaches (as in S1), and a **slow page**, where a parser-blocking external script that takes 600 ms comes first, so the page's own first inline script runs at about 620–640 ms. Each page was loaded twice per variant, the first load right after the install and then a reload. Same environment as S1 (Chromium 156.0.8078.4, headless).
+
+What each cell records:
+- **readyState at first line:** `document.readyState` on the userscript's first line.
+- **Before the page's first head script:** whether the page's first inline `<head>` script found the userscript's marker attribute on `<html>`.
+- **World:** "isolated" if the userscript could not see `window.pageGlobal` (set by a later page script) and the page could not see `window.__usGlobal` (set by the userscript's first line); "page" if both were visible.
+- **gm.addElement before page scripts:** whether the page's first inline script found the marker that a `GM_addElement(html, "script", …)` call had set synchronously, and `window.__x2uPageWorld` from that script.
+
+| Manager | `@grant` | Headers | readyState at first line (fast / slow page) | Before page's first head script (fast / slow) | World | `gm.addElement` before page scripts (fast / slow) |
+|---|---|---|---|---|---|---|
+| TM 5.5.1 | GM functions | `@sandbox DOM` + `@inject-into content` (S1 baseline) | complete / loading | no / yes | isolated | no / yes |
+| TM 5.5.1 | GM functions | none | complete / loading | no / yes | isolated | no / yes |
+| TM 5.5.1 | GM functions | `@sandbox raw` | complete / loading | no / yes | isolated | no / yes |
+| TM 5.5.1 | GM functions | `@sandbox JavaScript` | complete / loading | no / yes | isolated | no / yes |
+| TM 5.5.1 | none | `@sandbox DOM` + `@inject-into content` | complete / loading | no / yes | page | n/a |
+| TM 5.5.1 | none | none | complete / loading | no / yes | page | n/a |
+| TM 5.5.1 | none | `@sandbox raw` | complete / loading | no / yes | page | n/a |
+| TM 5.5.1 | none | `@sandbox JavaScript` | complete / loading | no / yes | page | n/a |
+| VM 2.49.0 | GM functions | `@sandbox DOM` + `@inject-into content` (S1 baseline) | complete / loading | no / yes | isolated | no / yes |
+| VM 2.49.0 | GM functions | none | complete / loading | no / yes | isolated | no / yes |
+| VM 2.49.0 | GM functions | `@inject-into page` | complete / loading | no / yes | isolated | no / yes |
+| VM 2.49.0 | GM functions | `@inject-into auto` | complete / loading | no / yes | isolated | no / yes |
+| VM 2.49.0 | none | `@sandbox DOM` + `@inject-into content` | complete / loading | no / yes | isolated | n/a |
+| VM 2.49.0 | none | none | complete / loading | no / yes | page | n/a |
+| VM 2.49.0 | none | `@inject-into page` | complete / loading | no / yes | page | n/a |
+| VM 2.49.0 | none | `@inject-into auto` | complete / loading | no / yes | page | n/a |
+
+Observations:
+- **Timing doesn't depend on the headers, the grants or the world.** Across all 64 loads per manager (32 without CSP, 32 with), the ordering was the same in every variant. The userscript's first line ran 24–46 ms after navigation start on Tampermonkey and 16–39 ms on Violentmonkey. The fast page's first inline script ran at 23–36 ms (TM runs) and 9–22 ms (VM runs), so the userscript started 4–11 ms (TM) and 7–22 ms (VM) after it, by which time the tiny page had already finished loading. The slow page's first inline script came about 600 ms later, so the userscript ran during parsing, first in every variant.
+- **First load and reload gave the same result** in all 16 variants on both pages: the same readyState, the same ordering and the same world. Only the start time varied, within a few milliseconds.
+- **A nonce-only CSP changed nothing.** All 16 variants were repeated on `script-src 'nonce-x2u'` versions of both pages (two loads of each page). The orderings, the worlds and the `gm.addElement` results were identical to the no-CSP rows, so page-world `@grant none` scripts and `gm.addElement` scripts both got past the CSP on both managers.
+- **With GM functions granted, no header gets out of the isolated world.** `@sandbox raw` and `@sandbox JavaScript` (TM) and `@inject-into page` and `auto` (VM) left the userscript unable to see page globals and the page unable to see the userscript's. For these variants the only way into the page's world was `gm.addElement("script")`; it ran synchronously in the page's world in every variant and on both pages.
+- **With `@grant none`, the script runs in the page's world** on TM for all four `@sandbox` values (including `DOM`, so `@sandbox DOM` alone doesn't isolate on TM) and on VM unless `@inject-into content` is set. There are no GM functions in that mode, so gm.ts can't be used.
+- **Controls.** Both profiles still hold the earlier scratch userscript `dbg5` (`@grant none`, `@match http://127.0.0.1/*`), which runs on all the pages above and only sets one attribute. Re-running the baseline and one `@grant none` variant per manager on `http://localhost:<port>`, which that script does not match, gave the same readyState, ordering and world.
+- Not tested: `@grant unsafeWindow`, pages other than local loopback, other values of `@run-at`, and anything that depends on machine load (the 16–46 ms start is from one machine, headless).
+
+**Conclusion:**
+- **No variant guarantees a start before the page's scripts.** Every variant starts 16–46 ms after navigation start, and wins or loses against the page's first inline script only by when that script runs: it won on the slow page and lost on the fast page by 4–22 ms.
+- **The world is set by `@grant`, not by the headers.** With GM functions, the script is always isolated and reaches the page's world only through `gm.addElement`; with `@grant none` it runs in the page's world (isolated only with VM's `@inject-into content`) but has no GM functions.
+- **Cost to isolation:** none for starting early, since the start time is the same in every variant. Keeping GM access means staying in the isolated world and using `gm.addElement` for page-world code. Running directly in the page's world (`@grant none`) gives up all GM functions, and on TM `@sandbox DOM` doesn't isolate such a script.
+
 ## S4: leader election and outbox protocol under churn
 
 Run:
