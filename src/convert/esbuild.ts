@@ -5,7 +5,7 @@ import { dirname, joinPath } from "./paths.ts";
 import type { ExtensionFiles } from "./unpack.ts";
 
 /** The part of the esbuild API used here. Native esbuild and esbuild-wasm both provide it. */
-export type EsbuildApi = Pick<typeof import("esbuild"), "build">;
+export type EsbuildApi = Pick<typeof import("esbuild"), "build" | "transform">;
 export type ModuleBundle = { code: string; remoteImports: string[] };
 
 const LOADERS: Record<string, Loader> = { js: "js", mjs: "js", cjs: "js", json: "json", css: "css" };
