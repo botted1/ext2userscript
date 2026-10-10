@@ -82,7 +82,7 @@ Observations:
 
 **Conclusion:**
 - **No variant guarantees a start before the page's scripts.** Every variant starts 16–46 ms after navigation start, and wins or loses against the page's first inline script only by when that script runs: it won on the slow page and lost on the fast page by 4–22 ms.
-- **The world is set by `@grant`, with one header exception.** With GM functions, the script is always isolated and reaches the page's world only through `gm.addElement`; with `@grant none` it runs in the page's world but has no GM functions. The exception is VM's `@inject-into content`, which does isolate a `@grant none` script.
+- **The world is set by `@grant`, with one header exception.** With GM functions, the script is always isolated and, of the routes tested, reaches the page's world only through `gm.addElement` (`@grant unsafeWindow` was not tested); with `@grant none` it runs in the page's world but has no GM functions. The exception is VM's `@inject-into content`, which does isolate a `@grant none` script.
 - **Cost to isolation:** none for starting early, since the start time is the same in every variant. Keeping GM access means staying in the isolated world and using `gm.addElement` for page-world code. Running directly in the page's world (`@grant none`) gives up all GM functions, and on TM `@sandbox DOM` doesn't isolate such a script.
 
 ### S1 re-run against the best-effort contract
