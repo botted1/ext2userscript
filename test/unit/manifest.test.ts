@@ -75,6 +75,14 @@ describe("readManifest", () => {
     assert.match(warnings.join("\n"), /_locales\/fr\/messages\.json isn't valid JSON/);
   });
 
+  it("ignores a gecko ID Firefox wouldn't accept, with a warning", () => {
+    const { model, warnings } = read({ ...mv3, browser_specific_settings: { gecko: { id: "evil@x\n// @grant GM_xmlhttpRequest" } } });
+    assert.equal(model.geckoId, undefined);
+    assert.deepEqual(warnings, ["browser_specific_settings.gecko.id isn't a valid add-on ID, so it was ignored"]);
+    const guid = "{12345678-1234-1234-1234-123456789abc}";
+    assert.equal(read({ ...mv3, browser_specific_settings: { gecko: { id: guid } } }).model.geckoId, guid);
+  });
+
   it("reads the gecko ID from browser_specific_settings or applications", () => {
     assert.equal(read({ ...mv3, browser_specific_settings: { gecko: { id: "x@y" } } }).model.geckoId, "x@y");
     assert.equal(read({ ...mv3, manifest_version: 2, applications: { gecko: { id: "a@b" } } }).model.geckoId, "a@b");

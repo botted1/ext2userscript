@@ -42,6 +42,8 @@ const RUN_AT: readonly string[] = ["document_start", "document_end", "document_i
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const invalid = (detail: string) => new Error(`Invalid manifest.json: ${detail}`);
+/** Firefox add-on IDs: an email-like name or a GUID. Anything else would reach the header and GM keys, so it is dropped. */
+const GECKO_ID = /^(?:[\w.-]*@[\w.-]+|\{[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\})$/i;
 
 /** JSON with comments, which Chrome accepts in manifest.json and messages.json. A leading byte-order mark is ignored. */
 export function parseJsonc(text: string): unknown {
@@ -99,6 +101,11 @@ export function readManifest(files: ExtensionFiles, options: { locale?: string }
   if (!name) throw invalid("name is required");
   if (typeof raw.version !== "string" || raw.version === "") throw invalid("version is required");
   const gecko = isObject(raw.browser_specific_settings) ? raw.browser_specific_settings.gecko : isObject(raw.applications) ? raw.applications.gecko : undefined;
+  let geckoId = isObject(gecko) && typeof gecko.id === "string" ? gecko.id : undefined;
+  if (geckoId !== undefined && !GECKO_ID.test(geckoId)) {
+    warnings.push(`${isObject(raw.browser_specific_settings) ? "browser_specific_settings" : "applications"}.gecko.id isn't a valid add-on ID, so it was ignored`);
+    geckoId = undefined;
+  }
 
   return {
     model: {
@@ -106,7 +113,7 @@ export function readManifest(files: ExtensionFiles, options: { locale?: string }
       name,
       description: text(raw.description),
       version: raw.version,
-      geckoId: isObject(gecko) && typeof gecko.id === "string" ? gecko.id : undefined,
+      geckoId,
       key: typeof raw.key === "string" ? raw.key : undefined,
       icons: icons(raw.icons),
       background: background(raw.background),

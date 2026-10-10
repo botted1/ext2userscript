@@ -16,9 +16,10 @@ export function namespaceOf(model: Model): string {
 }
 
 export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, grants: readonly string[]): string {
+  // Every value goes through oneLine: a line break in any of them would start a header line of its own.
   const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
-  const lines: Array<[key: string, value: string]> = [["name", oneLine(model.name)], ["namespace", ns], ["version", oneLine(model.version)]];
-  if (model.description) lines.push(["description", oneLine(model.description)]);
+  const lines: Array<[key: string, value: string]> = [["name", model.name], ["namespace", ns], ["version", model.version]];
+  if (model.description) lines.push(["description", model.description]);
   const icon = iconDataUrl(model, files);
   if (icon) lines.push(["icon", icon]);
 
@@ -33,7 +34,7 @@ export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, 
   if (!groups.some((group) => group.allFrames)) lines.push(["noframes", ""]);
   lines.push(["sandbox", "DOM"], ["inject-into", "content"]);
   for (const grant of grants) lines.push(["grant", grant]);
-  return ["// ==UserScript==", ...lines.map(([key, value]) => `// @${key.padEnd(12)} ${value}`.trimEnd()), "// ==/UserScript=="].join("\n");
+  return ["// ==UserScript==", ...lines.map(([key, value]) => `// @${key.padEnd(12)} ${oneLine(value)}`.trimEnd()), "// ==/UserScript=="].join("\n");
 }
 
 /** The smallest icon of at least 32px, or the largest one when all are smaller, as a data: URL. */
