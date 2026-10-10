@@ -37,7 +37,7 @@ What the run shows:
 - **Not a registration race or a headless artefact.** A scratch run outside the suite (not committed) installed the same userscript, waited 6 s, then loaded the normal and CSP pages twice each, headless and headed, on both managers. All 16 loads gave `startReadyState` `"complete"` and `pageSawSync` `"no"`. Reading the page's own world from Playwright afterwards gave `window.__x2uPageWorld === 1` and `data-x2u-sync="1"` on every load, CSP page included, so the injected script does run in the page's world, only after the page's scripts.
 - **Install flow.** Tampermonkey ignored a `.user.js` navigation made in its first seconds after launch (a navigation at 0.5 s was missed; one at 9.5 s opened `ask.html` within 0.5 s), and each launch opens a welcome tab at `tampermonkey.net` with an "unofficial version of Tampermonkey" warning because the build is unpacked. The install also opened `https://www.tampermonkey.net/script_installation.php#url=<script URL>` next to `ask.html`; whether the install needs network access to that site was not tested.
 
-**Result:** FAIL on both managers. Single-page contract and strict-CSP page-world injection fail on the same assertion (`pageSawSync`); the remote value change passes.
+**Result:** FAIL on both managers for the original contract (a `document-start` script runs before every page script, tested on an instant local page). Single-page contract and strict-CSP page-world injection fail on the same assertion (`pageSawSync`); the remote value change passes. Against the best-effort contract (the injection beats a page script that runs at least 200 ms after navigation start) all three pass on both managers: see [S1 re-run against the best-effort contract](#s1-re-run-against-the-best-effort-contract).
 - **§5.5 page-world injection under CSP:** on Tampermonkey 5.5.1 and Violentmonkey 2.49.0 a `document-start` userscript with isolation (`@sandbox DOM` / `@inject-into content`) started with `readyState` `"complete"` on a small local page, after the page's own inline script. `gm.addElement` injects into the page's world synchronously and gets past a nonce-only CSP, but it can't make a page-world script run before page scripts. Any converted extension that needs a `document_start` MAIN-world script to patch page globals first can't rely on this path.
 - **§5.1 gm.ts contract:** the GM functions, value-change delivery (local and remote) and `addElement` behave as the contract says. The "document-start runs before page scripts" part of the contract does not hold on either manager.
 - **§4 isolation headers:** not affected. Content scripts did not see page globals on either manager.
@@ -84,6 +84,31 @@ Observations:
 - **No variant guarantees a start before the page's scripts.** Every variant starts 16–46 ms after navigation start, and wins or loses against the page's first inline script only by when that script runs: it won on the slow page and lost on the fast page by 4–22 ms.
 - **The world is set by `@grant`, not by the headers.** With GM functions, the script is always isolated and reaches the page's world only through `gm.addElement`; with `@grant none` it runs in the page's world (isolated only with VM's `@inject-into content`) but has no GM functions.
 - **Cost to isolation:** none for starting early, since the start time is the same in every variant. Keeping GM access means staying in the isolated world and using `gm.addElement` for page-world code. Running directly in the page's world (`@grant none`) gives up all GM functions, and on TM `@sandbox DOM` doesn't isolate such a script.
+
+### S1 re-run against the best-effort contract
+
+Run: `X2U_BACKENDS=tm,vm npm run test:file -- test/browser/conformance.test.ts` (6 tests, 6 pass, 0 fail). The emulator run of the same file still passes (2 pass, 1 skipped). Same environment as S1 (Chromium 156.0.8078.4, TM 5.5.1, VM 2.49.0, headless).
+
+What changed: the follow-up showed that TM and VM start a `document-start` userscript 16–46 ms after navigation start whatever the headers, so "before every page script" can't be met on an instant page. The test now pins the best-effort contract instead. `/conformance.html` and `/conformance-csp.html` (the latter with a nonce) put a parser-blocking `<script src="/slow.js"></script>` in `<head>` before the page's own inline script, and the server answers `/slow.js` after 200 ms with an empty body. The page's own script therefore runs at least 200 ms after navigation start. The two `pageSawSync` assertion messages now say so; no other assertion changed.
+
+| | Tampermonkey | Violentmonkey |
+|---|---|---|
+| Single-page contract | PASS | PASS |
+| Strict-CSP page-world injection | PASS | PASS |
+| Remote value change | PASS | PASS |
+
+No assertion failed, so there is no first failing assertion to record. In both managers' logs `startReadyState` is `"loading"` (it was `"complete"` in the original run), `pageSawSync` and `pageSawWorld` are `"1"`, and `pageGlobalVisible` is `false`.
+
+Raw log lines (the `done: true` object each probe left on `<html data-x2u-conformance>`):
+
+```
+[tm]     {"startReadyState":"loading","addElementSync":true,"addElementResolved":true,"caps":{"valueListeners":true,"menus":true,"cookies":true},"handler":"Tampermonkey","pageSawSync":"1","pageSawWorld":"1","pageGlobalVisible":false,"roundtrip":true,"listed":true,"deleted":true,"localListener":{"value":"local","remote":false},"menu":true,"xhrJson":true,"xhrBytes":true,"openInTab":true,"notification":true,"cookieSet":true,"cookieDeleted":true,"done":true}
+[tm csp] {"startReadyState":"loading","addElementSync":true,"addElementResolved":true,"pageSawSync":"1","pageSawWorld":"1","done":true}
+[vm]     {"startReadyState":"loading","addElementSync":true,"addElementResolved":true,"caps":{"valueListeners":true,"menus":true,"cookies":true},"handler":"Violentmonkey","pageSawSync":"1","pageSawWorld":"1","pageGlobalVisible":false,"roundtrip":true,"listed":true,"deleted":true,"localListener":{"value":"local","remote":false},"menu":true,"xhrJson":true,"xhrBytes":true,"openInTab":true,"notification":true,"cookieSet":true,"cookieDeleted":true,"done":true}
+[vm csp] {"startReadyState":"loading","addElementSync":true,"addElementResolved":true,"pageSawSync":"1","pageSawWorld":"1","done":true}
+```
+
+The run also makes the remaining S1 assertions pass on the real managers, which the original run never reached because the single-page test stops at its first failure: `pageSawWorld`, `pageGlobalVisible` (`false` on both), the roundtrip, listing, value-change listener, menu, `xmlHttpRequest`, `openInTab`, `notification` and cookie checks.
 
 ## S4: leader election and outbox protocol under churn
 

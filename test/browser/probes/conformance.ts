@@ -29,7 +29,7 @@ function whenParsed(callback: () => void) {
   else callback();
 }
 
-/** Runs at document-start, before the page's own scripts (spec §5.1 and S1). */
+/** Runs at document-start, which is best-effort: the manager starts it 16-46 ms after navigation start (spec §5.1 and S1). */
 function injectIntoPage() {
   record("startReadyState", document.readyState);
   const injected = gm.addElement(html, "script", {

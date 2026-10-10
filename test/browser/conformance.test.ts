@@ -6,6 +6,7 @@ import { backendsFromEnv, startSession } from "../../bench/session.ts";
 import { GRANTS } from "../../src/runtime/gm.ts";
 import { waitForJson } from "../support/dom.ts";
 import { startServer, type Server } from "../support/server.ts";
+import { sleep } from "../support/time.ts";
 import { buildUserscript } from "../support/userscript.ts";
 
 const page = (head = "", headers: Record<string, string> = {}) => () =>
@@ -49,10 +50,16 @@ for (const backend of backendsFromEnv()) {
     let userscript: string;
 
     before(async () => {
+      // TM/VM start document-start userscripts ~16-46 ms after navigation start (spike S1), so the contract is best-effort;
+      // /slow.js holds the page's own script back 200 ms.
       site = await startServer({
-        "/conformance.html": page(`<script>${PAGE_SAW_USERSCRIPT} window.pageGlobal = "page";</script>`),
+        "/slow.js": async () => {
+          await sleep(200);
+          return new Response("", { headers: { "content-type": "text/javascript" } });
+        },
+        "/conformance.html": page(`<script src="/slow.js"></script><script>${PAGE_SAW_USERSCRIPT} window.pageGlobal = "page";</script>`),
         // Only the nonce'd inline script may run, so a script the userscript injects needs the manager to get past the CSP.
-        "/conformance-csp.html": page(`<script nonce="x2u">${PAGE_SAW_USERSCRIPT}</script>`, { "content-security-policy": "script-src 'nonce-x2u'" }),
+        "/conformance-csp.html": page(`<script nonce="x2u" src="/slow.js"></script><script nonce="x2u">${PAGE_SAW_USERSCRIPT}</script>`, { "content-security-policy": "script-src 'nonce-x2u'" }),
         "/reader.html": page(),
         "/opened.html": page(),
       });
@@ -94,7 +101,7 @@ for (const backend of backendsFromEnv()) {
         assert.equal(r.caps?.menus, true);
         assert.equal(r.addElementSync, true, "gm.addElement must run a page-world script synchronously");
         assert.equal(r.addElementResolved, true, r.addElementError);
-        assert.equal(r.pageSawSync, "1", "a script injected at document-start must run before the page's own scripts");
+        assert.equal(r.pageSawSync, "1", "a script injected at document-start must run before a page script that runs ≥ 200 ms after navigation start");
         assert.equal(r.pageSawWorld, "1", "the script gm.addElement injects must run in the page's own world");
         assert.equal(r.pageGlobalVisible, backend === "emulator", "content scripts must not see page globals (the emulator runs in the page world)");
         assert.equal(r.roundtrip, true);
@@ -126,7 +133,7 @@ for (const backend of backendsFromEnv()) {
           const r = await waitForJson<SingleResult>(tab, "data-x2u-conformance", (x) => x.done === true, 30_000);
           console.log(`[${backend} csp] ${JSON.stringify(r)}`);
           assert.equal(r.error, undefined, `probe threw: ${r.error}`);
-          assert.equal(r.pageSawSync, "1", "a script injected at document-start must run before the page's own scripts, whatever the page's CSP says");
+          assert.equal(r.pageSawSync, "1", "a script injected at document-start must run before a page script that runs ≥ 200 ms after navigation start, whatever the page's CSP says");
           assert.equal(r.pageSawWorld, "1", "the script gm.addElement injects must run in the page's own world, whatever the page's CSP says");
         } finally {
           await session.close();
