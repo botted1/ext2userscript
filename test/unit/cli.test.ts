@@ -73,6 +73,13 @@ describe("ext2userscript CLI", () => {
     assert.deepEqual(new Uint8Array(await readFile(join(cwd, "downloaded.zip"))), sampleZip);
   });
 
+  it("says what it downloads before it does, and nothing for local sources", async () => {
+    const remote = await run(cwd, "report", `${server.origin}/sample.zip`);
+    assert.equal(remote.stderr, `Downloading ${server.origin}/sample.zip\n`);
+    const local = await run(cwd, "report", "plain");
+    assert.equal(local.stderr, "");
+  });
+
   it("explains a bad command line or a missing source", async () => {
     const usage = await run(cwd, "explode", "x");
     assert.equal(usage.code, 1);

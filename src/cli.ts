@@ -8,7 +8,7 @@ import { convert, inspect } from "./convert/index.ts";
 import { slugify } from "./convert/metadata.ts";
 import { formatReport, type Report } from "./convert/report.ts";
 import { loadRuntime } from "./convert/runtime-node.ts";
-import { parseSource, readArchive, readSource, sourceName } from "./source.ts";
+import { parseSource, readArchive, readSource, sourceName, type Source } from "./source.ts";
 
 export const USAGE = `Usage:
   ext2userscript convert <source> [-o out.user.js] [--report report.json] [--locale xx] [--minify] [--ignore-assets glob,...] [--force]
@@ -56,6 +56,9 @@ export async function main(argv: readonly string[], out: Output = process.stdout
 
   try {
     const source = await parseSource(input);
+    // A mistyped folder name can read as an AMO slug, so say so before anything is fetched.
+    const remote = remoteName(source);
+    if (remote) err.write(`Downloading ${remote}\n`);
     const write = (path: string, data: string | Uint8Array) => writeOnce(path, data, values.force === true);
 
     if (command === "download") {
@@ -99,6 +102,21 @@ async function writeOnce(path: string, data: string | Uint8Array, force: boolean
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${path} already exists (use --force to overwrite it)`);
     throw error;
+  }
+}
+
+function remoteName(source: Source): string | undefined {
+  switch (source.kind) {
+    case "cws":
+      return `${source.id} from the Chrome Web Store`;
+    case "edge":
+      return `${source.id} from Edge Add-ons`;
+    case "amo":
+      return `"${source.slug}" from addons.mozilla.org`;
+    case "url":
+      return source.url;
+    default:
+      return undefined;
   }
 }
 
