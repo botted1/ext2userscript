@@ -1,7 +1,7 @@
 # ext2userscript — design
 
 Date: 2026-10-09
-Status: reviewed 2026-10-09; GM-layer revision applied; spike revisions (§5.1, §5.5, §6) applied 2026-10-10, awaiting review
+Status: reviewed 2026-10-09; GM-layer revision applied; spike revisions (§5.1, §5.5, §6) approved 2026-10-10; Plan 2 corrections (§3.5, §3.6, §4) applied 2026-10-10
 
 ## 1. Goal
 
@@ -166,13 +166,14 @@ type Report = {
 
 How the verdict is derived:
 - `unlikely` if any unsupported entry sits in a context the extension relies on: background, or content scripts.
-- `partial` if there are partial entries.
+- `partial` if there are partial entries, or unsupported entries in other contexts (popup, options, page).
 - Otherwise `likely-works`.
 
 The CLI prints a table and can write `--report report.json`. The web app renders the same data.
 
 ### 3.6 Assets
-- **Collected:** every file referenced from `runtime.getURL` string literals, CSS `url()`, and HTML `src`/`href`/`srcset`, plus all of `web_accessible_resources` and `_locales`.
+- **Collected:** every file referenced from `runtime.getURL` string literals, CSS `url()`, and HTML `src`/`href`/`srcset`, plus all of `web_accessible_resources`.
+- **Locales:** every `_locales/<locale>/messages.json` goes into the runtime config as parsed JSON, not into the asset table, because `i18n.getMessage` picks the locale in the browser.
 - **Excluded:** files matching `--ignore-assets <glob,...>`.
 - **Stored:** as base64 in an asset table, with the MIME type taken from the extension.
 - **At runtime:** `runtime.getURL(path)` returns a `blob:` URL. Each URL is created lazily and cached per path.
@@ -185,8 +186,8 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 | name, version, description, icons | `@name`, `@version`, `@description`, `@icon` (data URL, smallest icon ≥ 32px) |
 | gecko id, or a slug of the name | `@namespace` |
 | `content_scripts[].matches` (`<all_urls>` → `*://*/*`) | `@match` |
-| `exclude_matches` | `@exclude-match` |
-| `include_globs` / `exclude_globs` | `@include` / `@exclude` (glob syntax supported by both managers) |
+| `exclude_matches` | `@exclude-match` for the patterns every group excludes; the runtime applies the rest |
+| `include_globs` / `exclude_globs` | not in the header; the runtime applies them. An `@include` adds URLs to the `@match` list instead of narrowing it, and an `@exclude` would also hide pages other groups match. |
 | no content scripts at all (popup/background-only extension) | `@match *://*/*`, with the UI reachable through the menu only |
 | host permissions | `@connect` per host (`*` for `<all_urls>`) |
 | earliest `run_at` | `@run-at` |
