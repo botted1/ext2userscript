@@ -160,3 +160,36 @@ Firefox: `firefox.launch()` exits at once with `Could not find profile folder.`,
 - PASS if all three rows are byte-identical and under 10,000 ms.
 - So far: Chromium and WebKit pass, with the first conversion about 20x under the budget. esbuild-wasm with `worker: false` inside a module Web Worker bundles Refined GitHub identically to native esbuild.
 - If Firefox fails, record which part failed and what it implies for spec §8, the web app.
+
+## S2: popup modal on strict-CSP sites
+
+Run: `npm run script -- spikes/s2-popup-csp/run.ts`. Raw results: `spikes/s2-popup-csp/results.json`.
+
+Environment: same as S1 (Tampermonkey 5.5.1, Violentmonkey 2.49.0, Chromium 156.0.8078.4 via Playwright 1.64.0, `channel: "chromium"`), headless, signed out. The probe ran at `document-idle` with isolation (`@sandbox DOM` / `@inject-into content`) and the full grant table. The runner only loaded each home page and read the result; nothing was clicked, signed in or accepted.
+
+| Manager / site | jsRan | eventsWork | gmStyleApplied | plainStyleApplied | innerHtml | domParser | imgBlob | imgData | imgIframeBlob | fontBlob | fontData |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| tm github.com | true | true | true | true | true | true | true | true | true | true | true |
+| tm youtube.com | true | true | true | true | TypeError (TrustedHTML) | TypeError (TrustedHTML) | true | true | true | true | true |
+| tm x.com | not run | not run | not run | not run | not run | not run | not run | not run | not run | not run | not run |
+| vm github.com | true | true | true | true | true | true | true | true | true | true | true |
+| vm youtube.com | true | true | true | true | true | true | true | true | true | true | true |
+| vm x.com | not run | not run | not run | not run | not run | not run | not run | not run | not run | not run | not run |
+
+The four rows that ran each ended with `"done":true`. Both x.com rows have no probe result: the site answered the headless browser with HTTP 403, `page.goto` failed with `net::ERR_HTTP_RESPONSE_CODE_FAILURE`, the page title read `x.com`, and the runner doesn't poll for the probe after a failed navigation. What the pages were (page title, status):
+- github.com: 200, "GitHub · Change is constant. GitHub keeps you ahead. · GitHub · GitHub" (the signed-out home page).
+- youtube.com: 200, "YouTube".
+- x.com: 403, "x.com" (the page body was not inspected).
+
+CSP each row got (from the response headers; abbreviated, all lists of hosts shortened to a count). No row had a `<meta http-equiv="Content-Security-Policy">` tag, and none had `(none)` for the header. Both managers saw the same policy for a site, apart from the nonce and the order of the YouTube policies.
+- **github.com:** one policy. `default-src 'none'`; `script-src github.githubassets.com 'sha256-…'`; `style-src 'unsafe-inline' github.githubassets.com`; `img-src 'self' data: blob:` + 24 hosts; `font-src github.githubassets.com` (no `data:`, no `blob:`); `frame-src` and `child-src` list named hosts only. No `require-trusted-types-for`.
+- **youtube.com:** three policies. (1) `script-src 'unsafe-eval' 'self' 'unsafe-inline'` + 20 hosts; (2) `script-src 'report-sample' 'nonce-…' 'unsafe-inline' 'strict-dynamic' https: http: 'unsafe-eval'`; (3) `require-trusted-types-for 'script'`, with no `trusted-types` allow-list. The third came second in the Tampermonkey response and last in the Violentmonkey one. There is no `style-src`, `img-src` or `font-src`.
+- **x.com** (on the 403 response): `default-src 'self'`; `script-src 'self' 'nonce-…' 'unsafe-inline' 'wasm-unsafe-eval'` + 14 hosts; `style-src 'self' 'unsafe-inline'` + 2 hosts; `img-src 'self' data: blob:` + 56 hosts; `font-src 'self' data:` + 3 hosts; `frame-src 'self'` + 21 hosts. No `require-trusted-types-for`. A real x.com page may send a different policy.
+
+**Result:** PASS on github.com and youtube.com for both managers (spec §11: `jsRan`, `eventsWork` and `gmStyleApplied` true). x.com is not tested: the rule "on every row" can't be checked for the two x.com rows.
+- **Asset columns:** all true on the four rows that ran, so there are no report warnings (spec §6 "Known ceiling") from this run. github.com is the only site that restricts a resource type the probe uses: its `font-src` lists only `github.githubassets.com`, yet both the `blob:` and the `data:` font loaded on both managers. Why the policy didn't block them was not investigated.
+- **Trusted Types (Plan 4):** youtube.com sends `require-trusted-types-for 'script'`. On Tampermonkey `innerHTML` and `DOMParser.parseFromString` threw `TypeError ... requires 'TrustedHTML' assignment` in the userscript, for `innerHTML` on the iframe's body and for `DOMParser`. On Violentmonkey both succeeded with the same header. The reason for the difference was not investigated. Plan 4 must build popup DOM without those sinks (`createElement`, `textContent`, `append`, `replaceChildren`), because `jsRan` shows that path works on both managers.
+- **Style columns don't discriminate here:** `gmStyleApplied` and `plainStyleApplied` are both true everywhere, and neither site restricts inline style (github.com `style-src` has `'unsafe-inline'`, youtube.com has none). A site with a nonce-only `style-src` was not in the set, so this run doesn't show whether `gm.addElement` is needed for styles.
+- **Headless:** sites may serve a headless browser a different page than a headed one. x.com did (403); github.com and youtube.com loaded their normal signed-out home pages, but a headed run could still differ.
+- **Runs:** the first run stopped at `tm x.com` because `goto` threw on the 403 (a runner bug: `run.ts` now takes the main document's response from the `response` event instead) and wrote no `results.json`. Its two completed rows matched the second run. The numbers above are from the second run.
+- **To close the x.com gap:** rerun with `HEADED=1 npm run script -- spikes/s2-popup-csp/run.ts`, which overwrites `results.json`. Not done here.
