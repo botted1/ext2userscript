@@ -58,21 +58,19 @@ describe("convert", () => {
 });
 
 describe("inspect", () => {
-  it("reports the sample as unlikely, naming what it uses", async () => {
+  it("reports the sample as partial, naming what it uses", async () => {
     const report = await inspect(sampleExtension(origin));
-    assert.equal(report.verdict, "unlikely");
+    assert.equal(report.verdict, "partial");
     assert.deepEqual(report.extension, { name: "Sample Extension", version: "1.2.3", manifestVersion: 3, id: report.extension.id });
-    const bySubject = Object.fromEntries(report.entries.map((entry) => [entry.subject, entry.status]));
-    assert.deepEqual(bySubject, {
-      "chrome.runtime.sendMessage": "unsupported",
-      "manifest.content_scripts.run_at": "partial",
-      "chrome.i18n.getMessage": "supported",
-      "chrome.runtime.getURL": "supported",
-      "chrome.runtime.id": "supported",
-      "chrome.storage.local": "supported",
-      "chrome.storage.onChanged": "supported",
-    });
-    assert.deepEqual(report.entries.map((entry) => entry.status), ["unsupported", "partial", "supported", "supported", "supported", "supported", "supported"]);
+    assert.deepEqual(report.entries.map((entry) => [entry.subject, entry.status, entry.contexts.join("+")]), [
+      ["manifest.content_scripts.run_at", "partial", "content"],
+      ["chrome.i18n.getMessage", "supported", "content"],
+      ["chrome.runtime.getURL", "supported", "content"],
+      ["chrome.runtime.id", "supported", "content"],
+      ["chrome.runtime.sendMessage", "supported", "content"],
+      ["chrome.storage.local", "supported", "content"],
+      ["chrome.storage.onChanged", "supported", "content"],
+    ]);
     assert.deepEqual(report.warnings, []);
   });
 

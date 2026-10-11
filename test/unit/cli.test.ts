@@ -28,6 +28,9 @@ describe("ext2userscript CLI", () => {
     await mkdir(join(cwd, "plain"));
     for (const [path, bytes] of plainExtension()) await writeFile(join(cwd, "plain", path), bytes);
     await writeFile(join(cwd, "sample.zip"), sampleZip);
+    // Replaces the new-tab page, which a userscript can't do: the verdict is unlikely.
+    await mkdir(join(cwd, "newtab"));
+    await writeFile(join(cwd, "newtab", "manifest.json"), JSON.stringify({ manifest_version: 3, name: "New Tab", version: "1.0", chrome_url_overrides: { newtab: "tab.html" } }));
     server = await startServer({ "/sample.zip": () => new Response(sampleZip) });
   });
 
@@ -50,11 +53,11 @@ describe("ext2userscript CLI", () => {
   });
 
   it("exits 2 when the verdict is unlikely, and writes the JSON report", async () => {
-    const result = await run(cwd, "convert", "sample.zip", "-o", "sample.user.js", "--report", "sample.json");
+    const result = await run(cwd, "convert", "newtab", "-o", "newtab.user.js", "--report", "newtab.json");
     assert.equal(result.code, 2, result.stderr);
-    const report = JSON.parse(await readFile(join(cwd, "sample.json"), "utf8"));
+    const report = JSON.parse(await readFile(join(cwd, "newtab.json"), "utf8"));
     assert.equal(report.verdict, "unlikely");
-    assert.ok(report.entries.some((entry: { subject: string }) => entry.subject === "chrome.runtime.sendMessage"));
+    assert.ok(report.entries.some((entry: { subject: string }) => entry.subject === "manifest.chrome_url_overrides"));
   });
 
   it("reports without writing a userscript", async () => {
@@ -65,7 +68,7 @@ describe("ext2userscript CLI", () => {
 
   it("converts from a URL and downloads an archive as it is", async () => {
     const converted = await run(cwd, "convert", `${server.origin}/sample.zip`, "-o", "from-url.user.js");
-    assert.equal(converted.code, 2, converted.stderr);
+    assert.equal(converted.code, 0, converted.stderr);
     const named = await run(cwd, "download", `${server.origin}/sample.zip`);
     assert.equal(named.code, 1, "sample.zip is already there");
     const downloaded = await run(cwd, "download", `${server.origin}/sample.zip`, "-o", "downloaded.zip");

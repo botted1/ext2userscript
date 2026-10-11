@@ -16,7 +16,7 @@ describe("analyze", () => {
     const { entries } = analyze(model({ content_scripts: [group] }), [scan(code)]);
     assert.deepEqual(entries, [
       { subject: "chrome.storage.local", status: "supported", contexts: ["content"] },
-      { subject: "chrome.runtime.sendMessage", status: "unsupported", reason: "messaging with the background isn't converted yet", contexts: ["content"] },
+      { subject: "chrome.runtime.sendMessage", status: "supported", contexts: ["content"] },
     ]);
   });
 
@@ -43,13 +43,12 @@ describe("analyze", () => {
     ]);
   });
 
-  it("reports the contexts and manifest features this version doesn't convert", () => {
+  it("reports the pages and manifest features this version doesn't convert", () => {
     const { entries } = analyze(
       model({ background: { service_worker: "sw.js" }, action: { default_popup: "p.html" }, options_ui: { page: "o.html" }, chrome_url_overrides: { newtab: "n.html" }, commands: {} }),
       [],
     );
     assert.deepEqual(entries.map((entry) => [entry.subject, entry.status, entry.contexts]), [
-      ["manifest.background", "unsupported", ["background"]],
       ["manifest.action.default_popup", "unsupported", ["popup"]],
       ["manifest.options_ui", "unsupported", ["options"]],
       ["manifest.chrome_url_overrides", "unsupported", ["background"]],
