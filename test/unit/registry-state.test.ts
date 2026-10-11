@@ -49,6 +49,50 @@ describe("registry tab state", () => {
     assert.deepEqual(live.registry.live().map((tab) => tab.id), [3]);
   });
 
+  it("keeps a live tab whose timers are throttled when two tabs ring 50 ms apart", async (t) => {
+    const hub = createHub();
+    // A heartbeat that never fires during the test: a long-hidden tab's timers.
+    const slow = { heartbeatMs: 60_000, staleMs: 90_000, responseMs: 300 };
+    const start = async (id: number) => {
+      const registry = await startRegistry(createGm(hub.tab()), "t", id, () => tabState(id), slow);
+      t.after(() => registry.stop());
+      return registry;
+    };
+    await start(1);
+    await sleep(400);
+    const a = await start(2);
+    await sleep(400);
+    const b = await start(3);
+    await sleep(400);
+    // A tab switch: both tabs touch, so each rings and checks.
+    await a.touch();
+    await sleep(50);
+    await b.touch();
+    await sleep(600);
+    assert.deepEqual(b.live().map((tab) => tab.id).sort(), [1, 2]);
+    assert.equal(hub.store.has("x2u:t:tab:1"), true);
+  });
+
+  it("comes straight back when another tab sweeps it by mistake", async (t) => {
+    const hub = createHub();
+    const registry = await startRegistry(createGm(hub.tab()), "t", 1, () => tabState(1), { heartbeatMs: 60_000, staleMs: 90_000, responseMs: 300 });
+    t.after(() => registry.stop());
+    await createGm(hub.tab()).deleteValue("x2u:t:tab:1");
+    await eventually(() => hub.store.has("x2u:t:tab:1"), 1000);
+  });
+
+  it("drops every swept ghost before it reports any of them, so a listener sees only live tabs", async (t) => {
+    const hub = createHub();
+    // Three tabs that died together, in a crash or a quick browser restart.
+    for (const id of [1, 2, 3]) hub.store.set(`x2u:t:tab:${id}`, { ...tabState(id), since: Date.now() - 60_000 + id, ts: Date.now() });
+    const registry = await startRegistry(createGm(hub.tab()), "t", 9, () => tabState(9), { heartbeatMs: 60_000, staleMs: 90_000, responseMs: 100 });
+    t.after(() => registry.stop());
+    const seen: number[][] = [];
+    registry.onRemoved(() => seen.push(registry.live().map((tab) => tab.id)));
+    await eventually(() => seen.length === 3, 1000);
+    assert.deepEqual(seen, [[], [], []]);
+  });
+
   it("deletes a departed tab's outbox along with its key", async (t) => {
     const hub = createHub();
     const a = await member(t, hub, 1);

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { startElection, type Election } from "../../src/runtime/elect.ts";
 import { createGm, type Gm } from "../../src/runtime/gm.ts";
 import { startRegistry, type Registry, type RegistryTiming } from "../../src/runtime/registry.ts";
-import { createHub } from "../support/gm-hub.ts";
+import { createHub, type Hub } from "../support/gm-hub.ts";
 import { eventually, sleep } from "../support/time.ts";
 
 const FAST: RegistryTiming = { heartbeatMs: 20, staleMs: 150 };
@@ -27,6 +27,15 @@ async function member(t: TestContext, gm: Gm, id: number, timing: RegistryTiming
 }
 
 const leaders = (members: Member[]) => members.filter((m) => m.election.isLeader()).map((m) => m.id);
+
+/** A crash: nothing runs in the tab any more, so it can't answer or come back, and its last heartbeat stays behind. */
+async function crash(hub: Hub, member: Member) {
+  const key = `x2u:t:tab:${member.id}`;
+  const last = hub.store.get(key) as Record<string, unknown>;
+  member.election.stop();
+  await member.registry.stop();
+  hub.store.set(key, { ...last, ts: Date.now() });
+}
 
 describe("leader election", () => {
   it("a lone tab leads once the grace period has passed", async (t) => {
@@ -81,6 +90,7 @@ describe("leader election", () => {
     const hub = createHub();
     const crashed = await member(t, createGm(hub.tab()), 1, { heartbeatMs: 10_000, staleMs: 150 });
     await eventually(() => crashed.election.isLeader(), 500);
+    await crash(hub, crashed);
     const b = await member(t, createGm(hub.tab()), 2);
     await sleep(50);
     assert.equal(b.election.isLeader(), false);
@@ -101,6 +111,7 @@ describe("leader election", () => {
     const hub = createHub();
     const crashed = await member(t, createGm(hub.tab()), 1, { heartbeatMs: 10_000, staleMs: 150 });
     await eventually(() => crashed.election.isLeader(), 500);
+    await crash(hub, crashed);
     const b = await member(t, createGm(hub.tab()), 2);
     await eventually(() => b.election.isLeader(), 1_000);
     // Tab 1 returns with its original since, as a frozen-then-thawed tab would. It keeps beating, so it stays live.

@@ -57,7 +57,8 @@ describe("tab registry", () => {
   it("drops a tab whose heartbeat goes stale and deletes its keys", async () => {
     const hub = createHub();
     const a = await startRegistry(createGm(hub.tab()), "t", 1, page, FAST);
-    const crashed = await startRegistry(createGm(hub.tab()), "t", 2, page, SLOW); // beats once, then never again
+    // A crashed tab: its last heartbeat and outbox stay behind, and nothing runs in it to beat or come back.
+    hub.tab().GM_setValue?.("x2u:t:tab:2", { ...page(), since: Date.now(), ts: Date.now() });
     hub.tab().GM_setValue?.("x2u:t:out:2", { epoch: "e", msgs: [] });
     const removed: number[] = [];
     a.onRemoved((id) => removed.push(id));
@@ -67,7 +68,6 @@ describe("tab registry", () => {
       assert.equal(hub.store.has("x2u:t:out:2"), false);
     } finally {
       await a.stop();
-      await crashed.stop();
     }
   });
 

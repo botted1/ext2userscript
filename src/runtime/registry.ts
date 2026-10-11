@@ -25,7 +25,10 @@ export type RegistryTiming = { heartbeatMs: number; staleMs: number; responseMs?
 
 /** Staleness outlives Chrome's one-wake-up-per-minute throttling of long-hidden tabs. */
 export const REGISTRY_TIMING: RegistryTiming = { heartbeatMs: 2_000, staleMs: 90_000, responseMs: 1_500 };
-/** A tab answers rings at most this often, so a burst of rings costs one heartbeat. */
+/**
+ * A tab answers a ring only if it rang at least this long after the last ring it answered, so a burst of rings costs one
+ * heartbeat. The ghost check allows for the rings a live tab skipped this way.
+ */
 const RESPONSE_INTERVAL_MS = 250;
 
 export type Registry = {
@@ -79,7 +82,7 @@ export async function startRegistry(
   let lastScan = Date.now();
   let awakeSince = -Infinity;
   let verifyBefore = 0;
-  let lastResponse = 0;
+  let lastAnswered = -Infinity;
   let heard = 0;
   const responseMs = timing.responseMs ?? REGISTRY_TIMING.responseMs ?? 1_500;
   const verifiers = new Set<ReturnType<typeof setTimeout>>();
@@ -108,9 +111,10 @@ export async function startRegistry(
     }, responseMs);
     verifiers.add(timer);
   };
-  const respond = () => {
-    if (!present || Date.now() - lastResponse < RESPONSE_INTERVAL_MS) return;
-    lastResponse = Date.now();
+  /** Answers the ring made at t. Skipping one keeps `heard` within RESPONSE_INTERVAL_MS of it, which the ghost check allows. */
+  const respond = (t: number) => {
+    if (!present || t - lastAnswered < RESPONSE_INTERVAL_MS) return;
+    lastAnswered = t;
     void beat();
   };
 
@@ -122,7 +126,7 @@ export async function startRegistry(
     if (woke) awakeSince = now;
     lastScan = now;
     if (woke && present) await ring();
-    // A verification pass: a tab that neither heard this tab's ring nor beat after it is a ghost.
+    // A verification pass: a tab that beat before this tab's ring and heard no ring near it is a ghost.
     const mustHaveBeaten = verifyBefore;
     verifyBefore = 0;
     const seen = new Set<number>();
@@ -134,7 +138,8 @@ export async function startRegistry(
       // Only canonical ids count, so an alias such as "tab:02" cannot clean up tab 2's outbox.
       if (!Number.isInteger(id) || String(id) !== suffix || id === me) continue;
       const value = await gm.getValue(key);
-      const ghost = mustHaveBeaten > 0 && isBeat(value) && value.ts <= mustHaveBeaten && (typeof value.heard === "number" ? value.heard : 0) < mustHaveBeaten;
+      const heardAt = isBeat(value) && typeof value.heard === "number" ? value.heard : 0;
+      const ghost = mustHaveBeaten > 0 && isBeat(value) && value.ts <= mustHaveBeaten && heardAt < mustHaveBeaten - RESPONSE_INTERVAL_MS;
       if (!isBeat(value) || now - Math.max(value.ts, awakeSince) > timing.staleMs || ghost) {
         // Gone, or not a value this runtime wrote: clean up after it.
         await gm.deleteValue(key);
@@ -162,9 +167,10 @@ export async function startRegistry(
         if (!sameState(previous, info)) notify(updated, info, previous);
       }
     }
-    for (const id of [...known.keys()]) {
-      if (seen.has(id)) continue;
-      known.delete(id);
+    // Every gone tab leaves `known` before any is reported, so a listener (a message resent to the new leader) sees only live tabs.
+    const gone = [...known.keys()].filter((id) => !seen.has(id));
+    for (const id of gone) known.delete(id);
+    for (const id of gone) {
       dirty = true;
       // A tab that left deleted its own key; its outbox goes too, as nothing will read it again.
       await gm.deleteValue(k.out(id));
@@ -198,9 +204,15 @@ export async function startRegistry(
   // Scan in a microtask: the hub may still be applying a batch key by key, and the scan must see all of it.
   const rosterListener = await gm.addValueChangeListener(k.roster, (_key, _old, value) => {
     const rang = value as { from?: unknown; t?: unknown } | undefined;
-    if (typeof rang?.t === "number") heard = Math.max(heard, rang.t);
-    if (rang?.from !== me) respond();
+    if (typeof rang?.t === "number") {
+      heard = Math.max(heard, rang.t);
+      if (rang.from !== me) respond(rang.t);
+    }
     queueMicrotask(() => void scan());
+  });
+  // Another tab can sweep this one by mistake (its main thread was busy past the response time): come straight back.
+  const selfListener = await gm.addValueChangeListener(k.tab(me), (_key, _old, value) => {
+    if (value === undefined && present) void beat().then(() => ring());
   });
   await ringAndVerify();
   await scan();
@@ -252,6 +264,7 @@ export async function startRegistry(
       present = false;
       try {
         await gm.removeValueChangeListener(rosterListener);
+        await gm.removeValueChangeListener(selfListener);
         await gm.deleteValue(k.tab(me));
       } finally {
         changed();
