@@ -12,8 +12,12 @@ export function createBackgroundGlobal(own: Record<string, unknown>) {
   const real = globalThis as unknown as Record<PropertyKey, unknown>;
   const listeners = new Map<string, Set<Listener>>();
   const bound = new Map<Function, Function>();
+  /** Functions background code put on the global (self.moment = factory()): handed back as they are, static members and all. */
+  const assigned = new WeakSet<Function>();
   const members: Record<string, unknown> = {
     ...own,
+    // self.onmessage and the like stay here: on the tab's real global, the page could post into the background's handler.
+    ...Object.fromEntries([...WORKER_EVENTS].map((type) => [`on${type}`, null])),
     addEventListener: (type: string, listener: Listener, options?: unknown) => {
       if (!WORKER_EVENTS.has(type)) return window.addEventListener(type, listener as EventListener, options as AddEventListenerOptions);
       if (!listeners.has(type)) listeners.set(type, new Set());
@@ -33,12 +37,13 @@ export function createBackgroundGlobal(own: Record<string, unknown>) {
       const value = real[property];
       // A native method needs the real global as `this`: self.setTimeout(...) would otherwise throw "Illegal invocation".
       // Lower-case names only, so constructors (self.Promise, self.URL) keep their static members.
-      if (typeof value !== "function" || typeof property !== "string" || !/^[a-z]/.test(property)) return value;
+      if (typeof value !== "function" || typeof property !== "string" || !/^[a-z]/.test(property) || assigned.has(value)) return value;
       let fn = bound.get(value);
       if (!fn) bound.set(value, (fn = value.bind(real)));
       return fn;
     },
     set(_target, property, value) {
+      if (typeof value === "function") assigned.add(value);
       if (typeof property === "string" && property in members) members[property] = value;
       else real[property] = value;
       return true;
@@ -52,7 +57,8 @@ export function createBackgroundGlobal(own: Record<string, unknown>) {
     /** Fires a service-worker lifecycle event at the listeners background code added on self. */
     fire(type: "install" | "activate") {
       const event = { type, waitUntil: () => {} };
-      for (const listener of listeners.get(type) ?? []) {
+      const handler = members[`on${type}`];
+      for (const listener of [...(listeners.get(type) ?? []), ...(typeof handler === "function" ? [handler as Listener] : [])]) {
         try {
           if (typeof listener === "function") listener(event);
           else listener.handleEvent(event);

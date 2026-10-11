@@ -129,4 +129,35 @@ describe("createBackgroundGlobal", () => {
     fire("activate");
     assert.deepEqual(seen, ["install", "activate"]);
   });
+
+  it("leaves a function the background put on the global as it is, static members included", () => {
+    const { global } = createBackgroundGlobal({});
+    const g = global as unknown as Record<string, unknown>;
+    const lib = Object.assign(function x2uLib() {}, { utc: 1 });
+    try {
+      g.x2uLib = lib;
+      assert.equal(g.x2uLib, lib);
+    } finally {
+      delete (globalThis as unknown as Record<string, unknown>).x2uLib;
+    }
+  });
+
+  it("keeps a worker's on<event> handlers on the background, where the page can't reach them, and fires oninstall", () => {
+    const { global, fire } = createBackgroundGlobal({});
+    const g = global as unknown as Record<string, unknown>;
+    const real = globalThis as unknown as Record<string, unknown>;
+    const seen: string[] = [];
+    const onmessage = () => seen.push("message");
+    try {
+      g.onmessage = onmessage;
+      g.oninstall = (event: { type: string }) => seen.push(event.type);
+      assert.equal(g.onmessage, onmessage);
+      assert.equal(real.onmessage, undefined);
+      fire("install");
+      assert.deepEqual(seen, ["install"]);
+    } finally {
+      delete real.onmessage;
+      delete real.oninstall;
+    }
+  });
 });
