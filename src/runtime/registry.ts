@@ -27,11 +27,6 @@ export type RegistryTiming = { heartbeatMs: number; staleMs: number; responseMs?
 
 /** Staleness outlives Chrome's one-wake-up-per-minute throttling of long-hidden tabs. */
 export const REGISTRY_TIMING: RegistryTiming = { heartbeatMs: 2_000, staleMs: 90_000, responseMs: 1_500 };
-/**
- * A tab answers a ring only if it rang at least this long after the last ring it answered, so a burst of rings costs one
- * heartbeat. The ghost check allows for the rings a live tab skipped this way.
- */
-const RESPONSE_INTERVAL_MS = 250;
 
 export type Registry = {
   readonly me: number;
@@ -85,7 +80,6 @@ export async function startRegistry(
   let lastScan = Date.now();
   let awakeSince = -Infinity;
   let verifyBefore = 0;
-  let lastAnswered = -Infinity;
   let heard = 0;
   const responseMs = timing.responseMs ?? REGISTRY_TIMING.responseMs ?? 1_500;
   const verifiers = new Set<ReturnType<typeof setTimeout>>();
@@ -114,11 +108,13 @@ export async function startRegistry(
     }, responseMs);
     verifiers.add(timer);
   };
-  /** Answers the ring made at t. Skipping one keeps `heard` within RESPONSE_INTERVAL_MS of it, which the ghost check allows. */
-  const respond = (t: number) => {
-    if (!present || t - lastAnswered < RESPONSE_INTERVAL_MS) return;
-    lastAnswered = t;
-    void beat();
+  /**
+   * Every ring gets a beat, even one right after another: a page that just started reads values from shortly before it did
+   * (Violentmonkey hands it a snapshot), so a beat written before it listened may never reach it, and it would sweep this
+   * live tab as a ghost. ponytail: a burst of rings costs one beat each per tab; coalesce if session restores show the load.
+   */
+  const respond = () => {
+    if (present) void beat();
   };
 
   const scanOnce = async () => {
@@ -129,7 +125,7 @@ export async function startRegistry(
     if (woke) awakeSince = now;
     lastScan = now;
     if (woke && present) await ring();
-    // A verification pass: a tab that beat before this tab's ring and heard no ring near it is a ghost.
+    // A verification pass: a tab that neither heard this tab's ring nor beat after it is a ghost.
     const mustHaveBeaten = verifyBefore;
     verifyBefore = 0;
     const seen = new Set<number>();
@@ -141,8 +137,7 @@ export async function startRegistry(
       // Only canonical ids count, so an alias such as "tab:02" cannot clean up tab 2's outbox.
       if (!Number.isInteger(id) || String(id) !== suffix || id === me) continue;
       const value = await gm.getValue(key);
-      const heardAt = isBeat(value) && typeof value.heard === "number" ? value.heard : 0;
-      const ghost = mustHaveBeaten > 0 && isBeat(value) && value.ts <= mustHaveBeaten && heardAt < mustHaveBeaten - RESPONSE_INTERVAL_MS;
+      const ghost = mustHaveBeaten > 0 && isBeat(value) && value.ts <= mustHaveBeaten && (typeof value.heard === "number" ? value.heard : 0) < mustHaveBeaten;
       if (!isBeat(value) || now - Math.max(value.ts, awakeSince) > timing.staleMs || ghost) {
         // Gone, or not a value this runtime wrote: clean up after it.
         await gm.deleteValue(key);
@@ -208,10 +203,8 @@ export async function startRegistry(
   // Scan in a microtask: the hub may still be applying a batch key by key, and the scan must see all of it.
   const rosterListener = await gm.addValueChangeListener(k.roster, (_key, _old, value) => {
     const rang = value as { from?: unknown; t?: unknown } | undefined;
-    if (typeof rang?.t === "number") {
-      heard = Math.max(heard, rang.t);
-      if (rang.from !== me) respond(rang.t);
-    }
+    if (typeof rang?.t === "number") heard = Math.max(heard, rang.t);
+    if (rang?.from !== me) respond();
     queueMicrotask(() => void scan());
   });
   // Another tab can sweep this one by mistake (its main thread was busy past the response time): come straight back.

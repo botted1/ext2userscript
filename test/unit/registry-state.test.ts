@@ -73,6 +73,29 @@ describe("registry tab state", () => {
     assert.equal(hub.store.has("x2u:t:tab:1"), true);
   });
 
+  it("answers every ring, so a tab that just started, reading values from before it did, hears from every live tab", async (t) => {
+    const hub = createHub();
+    const live = await startRegistry(createGm(hub.tab()), "t", 1, () => tabState(1), { heartbeatMs: 60_000, staleMs: 90_000, responseMs: 300 });
+    t.after(() => live.stop());
+    const ringer = createGm(hub.tab());
+    const first = Date.now();
+    await ringer.setValue("x2u:t:roster", { from: 7, t: first });
+    await sleep(50);
+    await ringer.setValue("x2u:t:roster", { from: 8, t: first + 50 });
+    await eventually(() => (hub.store.get("x2u:t:tab:1") as { heard?: number }).heard === first + 50, 1000);
+  });
+
+  it("sweeps a departed tab that a newly started tab still sees, even one that answered a ring just before it left", async (t) => {
+    const hub = createHub();
+    // Violentmonkey hands a starting page the values from shortly before it started: tab 1 answered a ring 50 ms ago, then
+    // left, and the page never saw its key go.
+    const now = Date.now();
+    hub.store.set("x2u:t:tab:1", { ...tabState(1), since: now - 60_000, ts: now - 40, heard: now - 50 });
+    const newcomer = await startRegistry(createGm(hub.tab()), "t", 3, () => tabState(3), { heartbeatMs: 60_000, staleMs: 90_000, responseMs: 100 });
+    t.after(() => newcomer.stop());
+    await eventually(() => newcomer.live().length === 0, 1000);
+  });
+
   it("comes straight back when another tab sweeps it by mistake", async (t) => {
     const hub = createHub();
     const registry = await startRegistry(createGm(hub.tab()), "t", 1, () => tabState(1), { heartbeatMs: 60_000, staleMs: 90_000, responseMs: 300 });
