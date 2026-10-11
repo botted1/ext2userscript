@@ -66,18 +66,21 @@ function whenRoot(fn: () => void): void {
  * later, from a callback, sees the originals (a ceiling).
  */
 function withGlobals(chrome: object, fn: () => void): void {
+  // Reflect, not delete or defineProperty: a manager's sandbox global can be a proxy that reports a change as refused
+  // (Violentmonkey's delete does, while removing the property), and strict mode would turn that report into an error
+  // after the group's code has already run.
   const global = globalThis as unknown as Record<string, unknown>;
   const saved = (["chrome", "browser"] as const).map((name) => [name, Object.getOwnPropertyDescriptor(global, name)] as const);
   for (const [name, descriptor] of saved) {
-    if (!descriptor || descriptor.configurable) Object.defineProperty(global, name, { value: chrome, configurable: true, writable: true });
+    if (!descriptor || descriptor.configurable) Reflect.defineProperty(global, name, { value: chrome, configurable: true, writable: true });
   }
   try {
     fn();
   } finally {
     for (const [name, descriptor] of saved) {
       if (descriptor && !descriptor.configurable) continue;
-      if (descriptor) Object.defineProperty(global, name, descriptor);
-      else delete global[name];
+      if (descriptor) Reflect.defineProperty(global, name, descriptor);
+      else Reflect.deleteProperty(global, name);
     }
   }
 }

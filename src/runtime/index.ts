@@ -1,14 +1,23 @@
 // The runtime's entry point (spec §5). runtime-node.ts bundles this file to an IIFE named __x2uRuntime, and every
-// userscript calls __x2uRuntime.start(config, code) once.
+// userscript calls __x2uRuntime.start(config, code, background) once per page.
+// Content scripts start at once, so document_start stays early; joining the other tabs (registry, bus, election) is
+// asynchronous, and messages sent before it finishes wait in the router.
 import { createAssets } from "./assets.ts";
+import { startBackground } from "./background.ts";
 import { createLogger, readLastError, withFallback } from "./chrome.ts";
-import type { GroupCode, RuntimeConfig } from "./config.ts";
+import type { BackgroundCode, GroupCode, RuntimeConfig } from "./config.ts";
 import { runContent } from "./content.ts";
+import { leaderOf, startElection } from "./elect.ts";
 import { createGm } from "./gm.ts";
 import { createI18n } from "./i18n.ts";
+import { tabIdentity } from "./identity.ts";
+import { createMessaging } from "./messaging.ts";
+import { startRegistry, type Registry, type TabInfo, type TabState } from "./registry.ts";
+import { startBus } from "./bus.ts";
 import { createStorage } from "./storage.ts";
+import { createTabs } from "./tabs.ts";
 
-export function start(config: RuntimeConfig, code: readonly GroupCode[]): void {
+export function start(config: RuntimeConfig, code: readonly GroupCode[], background: BackgroundCode | null = null): void {
   const log = createLogger(config.name);
   try {
     const gm = createGm();
@@ -16,10 +25,35 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[]): void {
       log.error(`${gm.handler} isn't supported: ext2userscript supports Tampermonkey and Violentmonkey`);
       return;
     }
+    const frame = window.top !== window;
     // Each namespace fakes the content-script members Chrome has and this version doesn't implement yet.
     const i18n = withFallback(log, "i18n", createI18n(config, log), ["detectLanguage"]);
     const assets = createAssets(config.assets, config.id, i18n.getMessage, log);
     const getURL = (path: string) => assets.url(path);
+    const storage = createStorage(gm, config.ns, log);
+    let registry: Registry | undefined;
+    let tabs: ReturnType<typeof createTabs> | undefined;
+    let leading = false;
+    let activeAt = document.visibilityState === "visible" ? Date.now() : 0;
+    const state = (): TabState => ({ url: location.href, title: document.title, frame, active: document.visibilityState === "visible", activeAt });
+
+    const messaging = createMessaging({
+      extensionId: config.id,
+      log,
+      leader: () => (registry ? leaderOf(registry) : undefined),
+      exists: (id) => registry !== undefined && (id === registry.me || registry.live().some((tab) => tab.id === id)),
+      sender: (from) =>
+        from === "background"
+          ? { id: config.id, url: `chrome-extension://${config.id}/${config.background?.entry ?? ""}`, origin: `chrome-extension://${config.id}` }
+          : { id: config.id, url: location.href, origin: location.origin, frameId: frame ? 1 : 0, ...(tabs ? { tab: tabs.selfTab() } : {}) },
+      control: async (op, args) => {
+        if (!tabs) throw new Error("this tab isn't ready");
+        return tabs.control(op, args);
+      },
+    });
+    // Without a background, a message for it fails at once instead of waiting for one to start.
+    if (!background) messaging.setBackgroundReady(true);
+
     const runtime = withFallback(log, "runtime", {
       id: config.id,
       get lastError() {
@@ -27,7 +61,8 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[]): void {
       },
       getURL,
       getManifest: () => structuredClone(config.manifest),
-    }, ["sendMessage", "connect", "onMessage", "onConnect"]);
+      ...messaging.runtime("content"),
+    }, []);
     const extension = withFallback(log, "extension", {
       getURL,
       inIncognitoContext: false,
@@ -37,8 +72,60 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[]): void {
     }, ["sendRequest", "onRequest"]);
     const dom = withFallback(log, "dom", {}, ["openOrClosedShadowRoot"]);
     // The namespaces Chrome gives content scripts. chrome.tabs and the rest are undefined there, as in Chrome.
-    const chrome = { runtime, storage: createStorage(gm, config.ns, log), i18n, extension, dom };
-    runContent(config, code, { gm, chrome, assets, log });
+    runContent(config, code, { gm, chrome: { runtime, storage, i18n, extension, dom }, assets, log });
+
+    void (async () => {
+      const me = await tabIdentity(gm, config.ns, frame);
+      const joined = await startRegistry(gm, config.ns, me, state);
+      registry = joined;
+      const pageTabs = createTabs({ gm, registry: joined, messaging, log, dispatching: () => leading });
+      tabs = pageTabs;
+      const bus = await startBus(gm, config.ns, joined, messaging.handle);
+      messaging.attach((to, wire) => bus.send(to, wire));
+      joined.onRemoved((id) => messaging.peerGone(id));
+
+      // This page's own changes: other tabs learn them from its heartbeat; its own background learns them here.
+      let last: TabInfo = { ...joined.self(), ts: Date.now() };
+      const changed = () => {
+        const now: TabInfo = { ...joined.self(), ts: Date.now() };
+        pageTabs.updated(now, last);
+        last = now;
+        void joined.touch();
+      };
+      addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") activeAt = Date.now();
+        changed();
+      });
+      addEventListener("popstate", changed);
+      addEventListener("hashchange", changed);
+      addEventListener("pagehide", () => void joined.leave());
+      addEventListener("pageshow", (event) => {
+        if (event.persisted) void joined.rejoin();
+      });
+
+      if (frame || !background) return;
+      let handle: { pause(): void; resume(): void } | undefined;
+      let starting = false;
+      startElection(joined, {
+        acquire: () => {
+          leading = true;
+          if (handle) return handle.resume();
+          if (starting) return;
+          starting = true;
+          startBackground({ config, code: background, gm, log, assets, i18n, storage, tabs: pageTabs.api, messaging }).then(
+            (started) => {
+              handle = started;
+              if (!leading) started.pause();
+            },
+            (error: unknown) => log.error("the background couldn't start:", error),
+          );
+        },
+        lose: () => {
+          leading = false;
+          handle?.pause();
+        },
+      });
+    })().catch((error: unknown) => log.error("couldn't join the other tabs:", error));
   } catch (error) {
     log.error("couldn't start:", error);
   }
