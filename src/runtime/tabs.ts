@@ -18,7 +18,7 @@ export type ChromeTab = {
   discarded: boolean;
   autoDiscardable: boolean;
   groupId: number;
-  status: "complete";
+  status: "loading" | "complete";
   url: string;
   title: string;
 };
@@ -26,11 +26,17 @@ export type ChromeTab = {
 export const WINDOW_ID = 1;
 /** How long tabs.create waits for the new page to join the registry. */
 const CREATE_WAIT_MS = 5_000;
+/**
+ * A same-origin navigation keeps the tab id, so a tab that rejoins this soon after leaving was navigating, which Chrome
+ * reports as onUpdated, not onRemoved and onCreated. onRemoved waits this long for a closed tab.
+ * ponytail: a page slower than this to start its userscript reports remove plus create, as a cross-origin one does.
+ */
+const REJOIN_MS = 5_000;
 
 type Query = { active?: boolean; currentWindow?: boolean; lastFocusedWindow?: boolean; windowId?: number; url?: string | string[]; title?: string; index?: number; status?: string };
 
 /** The Tab object Chrome hands out, for one registry entry. */
-export function toChromeTab(info: Pick<TabInfo, "id" | "url" | "title" | "active">, index: number): ChromeTab {
+export function toChromeTab(info: Pick<TabInfo, "id" | "url" | "title" | "active" | "status">, index: number): ChromeTab {
   return {
     id: info.id,
     index,
@@ -42,13 +48,13 @@ export function toChromeTab(info: Pick<TabInfo, "id" | "url" | "title" | "active
     discarded: false,
     autoDiscardable: true,
     groupId: -1,
-    status: "complete",
+    status: info.status ?? "complete",
     url: info.url,
     title: info.title,
   };
 }
 
-export function createTabs(deps: { gm: Gm; registry: Registry; messaging: Messaging; log: Logger; dispatching(): boolean }) {
+export function createTabs(deps: { gm: Gm; registry: Registry; messaging: Messaging; log: Logger; dispatching(): boolean; rejoinMs?: number }) {
   const { gm, registry, messaging, log } = deps;
   const opened = new Map<number, TabControl>();
   const onCreated = createEvent<(tab: ChromeTab) => void>(log);
@@ -77,12 +83,21 @@ export function createTabs(deps: { gm: Gm; registry: Registry; messaging: Messag
     if (deps.dispatching()) dispatch();
   };
 
+  const leaving = new Map<number, ReturnType<typeof setTimeout>>();
   registry.onAdded((info) => {
-    if (!info.frame) emit(() => onCreated.dispatch(find(info.id)));
+    if (info.frame) return;
+    const left = leaving.get(info.id);
+    if (left === undefined) return emit(() => onCreated.dispatch(find(info.id)));
+    clearTimeout(left);
+    leaving.delete(info.id);
+    emit(() => onUpdated.dispatch(info.id, { status: info.status ?? "complete", url: info.url }, find(info.id)));
   });
   registry.onRemoved((id) => {
-    opened.delete(id);
-    emit(() => onRemoved.dispatch(id, { windowId: WINDOW_ID, isWindowClosing: false }));
+    leaving.set(id, setTimeout(() => {
+      leaving.delete(id);
+      opened.delete(id);
+      emit(() => onRemoved.dispatch(id, { windowId: WINDOW_ID, isWindowClosing: false }));
+    }, deps.rejoinMs ?? REJOIN_MS));
   });
   /** Also called for this page's own changes, which the registry doesn't report to itself. */
   const updated = (info: TabInfo, previous: TabInfo) => {
@@ -90,7 +105,9 @@ export function createTabs(deps: { gm: Gm; registry: Registry; messaging: Messag
     const change: Record<string, unknown> = {};
     if (info.url !== previous.url) change.url = info.url;
     if (info.title !== previous.title) change.title = info.title;
-    if (Object.keys(change).length > 0) emit(() => onUpdated.dispatch(info.id, { status: "complete", ...change }, find(info.id)));
+    if (Object.keys(change).length > 0 || info.status !== previous.status) {
+      emit(() => onUpdated.dispatch(info.id, { status: info.status ?? "complete", ...change }, find(info.id)));
+    }
     if (info.active && info.activeAt !== previous.activeAt) emit(() => onActivated.dispatch({ tabId: info.id, windowId: WINDOW_ID }));
   };
   registry.onUpdated(updated);
@@ -152,6 +169,7 @@ export function createTabs(deps: { gm: Gm; registry: Registry; messaging: Messag
           if (query.url !== undefined && !urlMatches(tab.url, typeof query.url === "string" ? [query.url] : query.url)) return false;
           if (query.title !== undefined && tab.title !== query.title) return false;
           if (query.index !== undefined && tab.index !== query.index) return false;
+          if (query.status !== undefined && tab.status !== query.status) return false;
           return true;
         }),
       ),

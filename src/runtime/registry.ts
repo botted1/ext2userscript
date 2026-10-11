@@ -19,6 +19,8 @@ export type TabState = {
   active: boolean;
   /** When the page last became visible or focused; the most recent visible tab is the "current" one. */
   activeAt: number;
+  /** Whether the page has finished loading (its load event), as chrome.tabs reports it. A tab without one counts as complete. */
+  status?: "loading" | "complete";
 };
 export type TabInfo = TabState & { id: number; since: number; ts: number };
 export type RegistryTiming = { heartbeatMs: number; staleMs: number; responseMs?: number };
@@ -59,7 +61,8 @@ const isBeat = (value: unknown): value is Beat =>
   typeof value === "object" && value !== null &&
   typeof (value as Beat).url === "string" && typeof (value as Beat).since === "number" && typeof (value as Beat).ts === "number";
 
-const sameState = (a: TabInfo, b: TabInfo) => a.url === b.url && a.title === b.title && a.active === b.active && a.activeAt === b.activeAt;
+const sameState = (a: TabInfo, b: TabInfo) =>
+  a.url === b.url && a.title === b.title && a.active === b.active && a.activeAt === b.activeAt && a.status === b.status;
 
 export async function startRegistry(
   gm: Gm,
@@ -154,6 +157,7 @@ export async function startRegistry(
         frame: value.frame === true,
         active: value.active === true,
         activeAt: typeof value.activeAt === "number" ? value.activeAt : 0,
+        status: value.status === "loading" ? "loading" : "complete",
         since: value.since,
         ts: value.ts,
       };

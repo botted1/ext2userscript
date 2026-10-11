@@ -35,7 +35,14 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
     let tabs: ReturnType<typeof createTabs> | undefined;
     let leading = false;
     let activeAt = document.visibilityState === "visible" ? Date.now() : 0;
-    const state = (): TabState => ({ url: location.href, title: document.title, frame, active: document.visibilityState === "visible", activeAt });
+    const state = (): TabState => ({
+      url: location.href,
+      title: document.title,
+      frame,
+      active: document.visibilityState === "visible",
+      activeAt,
+      status: document.readyState === "complete" ? "complete" : "loading",
+    });
 
     const messaging = createMessaging({
       extensionId: config.id,
@@ -98,6 +105,8 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
       });
       addEventListener("popstate", changed);
       addEventListener("hashchange", changed);
+      // status "complete" (a load that already happened reaches other tabs with the next heartbeat).
+      addEventListener("load", changed);
       addEventListener("pagehide", () => void joined.leave());
       addEventListener("pageshow", (event) => {
         if (event.persisted) void joined.rejoin();

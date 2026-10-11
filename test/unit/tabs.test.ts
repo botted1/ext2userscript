@@ -35,7 +35,7 @@ describe("tabs API", () => {
     const bus = await startBus(gm, "t", registry, messaging.handle);
     messaging.attach((to, wire) => bus.send(to, wire));
     t.after(() => bus.stop());
-    return createTabs({ gm, registry, messaging, log: createLogger("test"), dispatching: () => true });
+    return createTabs({ gm, registry, messaging, log: createLogger("test"), dispatching: () => true, rejoinMs: 300 });
   }
 
   it("queries every tab, this one included, oldest first, and finds the active one", async (t) => {
@@ -72,5 +72,30 @@ describe("tabs API", () => {
     await other.registry.leave();
     await eventually(() => events.length === 4, 1000);
     assert.deepEqual(events, ["created 2", 'updated 2 {"status":"complete","title":"renamed"}', "activated 2", "removed 2"]);
+  });
+
+  it("reports a same-origin navigation as updates, not a close and an open, and a finished load as status complete", async (t) => {
+    const hub = createHub();
+    const tabs = await background(t, hub, 1);
+    const events: string[] = [];
+    tabs.api.onCreated.addListener((tab: { id: number; status: string }) => events.push(`created ${tab.id} ${tab.status}`));
+    tabs.api.onUpdated.addListener((id: number, change: Record<string, unknown>) => events.push(`updated ${id} ${JSON.stringify(change)}`));
+    tabs.api.onRemoved.addListener((id: number) => events.push(`removed ${id}`));
+    const first = await member(t, hub, 42, () => tabState(42, { url: "https://site.test/one", status: "loading" }));
+    await eventually(() => events.length === 1, 1000);
+    // pagehide; then the next page in the same tab joins with the same id, which sessionStorage kept.
+    await first.registry.leave();
+    let state = tabState(42, { url: "https://site.test/two", status: "loading" });
+    const second = await member(t, hub, 42, () => state);
+    await eventually(() => events.length === 2, 1000);
+    state = { ...state, status: "complete" };
+    await second.registry.touch();
+    await eventually(() => events.length === 3, 1000);
+    await sleep(400); // past rejoinMs: the tab was never removed
+    assert.deepEqual(events, [
+      "created 42 loading",
+      'updated 42 {"status":"loading","url":"https://site.test/two"}',
+      'updated 42 {"status":"complete"}',
+    ]);
   });
 });

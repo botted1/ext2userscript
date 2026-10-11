@@ -25,7 +25,7 @@ describe("registry tab state", () => {
     let title = "before";
     const b = await member(t, hub, 2, () => tabState(2, { title, active: true, activeAt: 5 }));
     await eventually(() => a.registry.live().length === 1, 1000);
-    assert.deepEqual({ ...a.registry.live()[0], since: 0, ts: 0 }, { id: 2, url: "https://site.test/2", title: "before", frame: false, active: true, activeAt: 5, since: 0, ts: 0 });
+    assert.deepEqual({ ...a.registry.live()[0], since: 0, ts: 0 }, { id: 2, url: "https://site.test/2", title: "before", frame: false, active: true, activeAt: 5, status: "complete", since: 0, ts: 0 });
     const updates: Array<[string, string]> = [];
     a.registry.onUpdated((tab: TabInfo, previous: TabInfo) => updates.push([previous.title, tab.title]));
     title = "after";
