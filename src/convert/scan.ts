@@ -1,6 +1,7 @@
-// A JavaScript scanner just deep enough for the analyzer (spec §3.4) and the asset collector (§3.6). It skips comments,
-// string and template text and regular expressions, then reads three things from what's left: member chains rooted at
-// chrome or browser, the string-literal arguments of getURL(...), and whether the code uses dynamic import().
+// A JavaScript scanner just deep enough for the analyzer (spec §3.4), the asset collector (§3.6) and the background
+// bundler (§3.3). It skips comments, string and template text and regular expressions, then reads from what's left:
+// member chains rooted at chrome or browser, the string-literal arguments of getURL(...), whether the code uses
+// dynamic import(), and where it calls importScripts(...).
 // Ceilings: aliasing (const c = chrome) and computed access (chrome["tabs"]) are missed, and a regular expression
 // right after `)` or `}` is read as a division.
 
@@ -10,9 +11,11 @@ export type ScanResult = {
   /** String literals passed to runtime.getURL or extension.getURL, as written. */
   urls: string[];
   dynamicImport: boolean;
+  /** importScripts(...) calls: where each is in the code, and its URLs when every argument is a string literal. */
+  importScripts: Array<{ start: number; end: number; urls?: string[] }>;
 };
 
-type Token = { kind: "name" | "punct" | "string" | "template" | "regex"; value: string };
+type Token = { kind: "name" | "punct" | "string" | "template" | "regex"; value: string; start: number; end: number };
 
 const NAME_CHAR = /[\w$\u0080-￿]/;
 /** Keywords after which a `/` starts a regular expression rather than a division. */
@@ -22,7 +25,7 @@ const GLOBAL_OWNERS = new Set(["window", "globalThis", "self"]);
 
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
-  const result: ScanResult = { chains: [], urls: [], dynamicImport: false };
+  const result: ScanResult = { chains: [], urls: [], dynamicImport: false, importScripts: [] };
   const isDot = (token: Token | undefined) => token?.kind === "punct" && (token.value === "." || token.value === "?.");
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
@@ -31,6 +34,21 @@ export function scan(code: string): ScanResult {
     if (token.value === "getURL" && isDot(tokens[i - 1]) && tokens[i + 1]?.value === "(" && tokens[i + 2]?.kind === "string") {
       const after = tokens[i + 3]?.value;
       if (after === ")" || after === ",") result.urls.push(tokens[i + 2].value);
+    }
+    if (token.value === "importScripts" && tokens[i + 1]?.value === "(") {
+      const owner = isDot(tokens[i - 1]) ? tokens[i - 2] : undefined;
+      // self.importScripts and globalThis.importScripts are the same function; someone else's importScripts isn't.
+      if (!owner || (owner.kind === "name" && GLOBAL_OWNERS.has(owner.value))) {
+        const urls: string[] = [];
+        let j = i + 2;
+        let literal = true;
+        while (tokens[j] && tokens[j].value !== ")") {
+          if (tokens[j].kind === "string") urls.push(tokens[j].value);
+          else if (tokens[j].value !== ",") literal = false;
+          j++;
+        }
+        result.importScripts.push({ start: (owner ?? token).start, end: tokens[j]?.end ?? token.end, ...(literal ? { urls } : {}) });
+      }
     }
     if (token.value !== "chrome" && token.value !== "browser") continue;
     if (isDot(tokens[i - 1]) && !(tokens[i - 2]?.kind === "name" && GLOBAL_OWNERS.has(tokens[i - 2].value))) continue;
@@ -86,10 +104,10 @@ function tokenize(code: string): Token[] {
     if (part.open) {
       substitutions.push(braces);
       braces++;
-      tokens.push({ kind: "punct", value: "${" });
+      tokens.push({ kind: "punct", value: "${", start: 0, end: 0 });
     } else {
       // A template without substitutions is a plain string; the end of one with substitutions is just "a value".
-      tokens.push(first ? { kind: "string", value: part.text } : { kind: "template", value: "" });
+      tokens.push(first ? { kind: "string", value: part.text, start: 0, end: 0 } : { kind: "template", value: "", start: 0, end: 0 });
     }
     return part.end;
   };
@@ -97,6 +115,8 @@ function tokenize(code: string): Token[] {
   while (i < code.length) {
     const char = code[i];
     const next = code[i + 1];
+    const begin = i;
+    const before = tokens.length;
     if (char === "/" && next === "/") {
       const end = code.indexOf("\n", i);
       i = end === -1 ? code.length : end;
@@ -115,7 +135,7 @@ function tokenize(code: string): Token[] {
           j++;
         }
       }
-      tokens.push({ kind: "string", value });
+      tokens.push({ kind: "string", value, start: 0, end: 0 });
       i = j + 1;
     } else if (char === "`") {
       i = template(i + 1, true);
@@ -143,23 +163,28 @@ function tokenize(code: string): Token[] {
         }
         j++;
       }
-      tokens.push({ kind: "regex", value: "" });
+      tokens.push({ kind: "regex", value: "", start: 0, end: 0 });
       i = j;
     } else if (NAME_CHAR.test(char)) {
       let j = i + 1;
       while (j < code.length && NAME_CHAR.test(code[j])) j++;
-      tokens.push({ kind: "name", value: code.slice(i, j) });
+      tokens.push({ kind: "name", value: code.slice(i, j), start: 0, end: 0 });
       i = j;
     } else if (char === "?" && next === "." && !/\d/.test(code[i + 2] ?? "")) {
-      tokens.push({ kind: "punct", value: "?." });
+      tokens.push({ kind: "punct", value: "?.", start: 0, end: 0 });
       i += 2;
     } else if (/\s/.test(char)) {
       i++;
     } else {
       if (char === "{") braces++;
       else if (char === "}") braces--;
-      tokens.push({ kind: "punct", value: char });
+      tokens.push({ kind: "punct", value: char, start: 0, end: 0 });
       i++;
+    }
+    // Where this step's tokens are in the code (a template step covers its whole text).
+    for (let n = before; n < tokens.length; n++) {
+      tokens[n].start = begin;
+      tokens[n].end = i;
     }
   }
   return tokens;

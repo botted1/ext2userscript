@@ -10,17 +10,25 @@ export type ModuleBundle = { code: string; remoteImports: string[] };
 
 const LOADERS: Record<string, Loader> = { js: "js", mjs: "js", cjs: "js", json: "json", css: "css" };
 
-/** Bundles an ES-module entry from the extension's files into one ESM string. Remote imports stay external and are listed. */
-export async function bundleModule(esbuild: EsbuildApi, files: ExtensionFiles, entry: string): Promise<ModuleBundle> {
+export type ModuleOptions = {
+  /** "iife" leaves no export statements behind, so the bundle can sit inside a function (a module background). */
+  format?: "esm" | "iife";
+  /** esbuild's define, e.g. { "import.meta": "__x2uImportMeta" }. */
+  define?: Record<string, string>;
+};
+
+/** Bundles an ES-module entry from the extension's files into one string. Remote imports stay external and are listed. */
+export async function bundleModule(esbuild: EsbuildApi, files: ExtensionFiles, entry: string, options: ModuleOptions = {}): Promise<ModuleBundle> {
   const remoteImports: string[] = [];
   const result = await esbuild.build({
     entryPoints: [entry],
     bundle: true,
-    format: "esm",
+    format: options.format ?? "esm",
     platform: "browser",
     target: "es2020",
     write: false,
     logLevel: "silent",
+    ...(options.define ? { define: options.define } : {}),
     plugins: [extensionFiles(files, remoteImports)],
   });
   return { code: result.outputFiles[0].text, remoteImports };

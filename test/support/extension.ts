@@ -1,5 +1,9 @@
-// Sample extensions for conversion tests, built in memory. sampleExtension exercises the content-script features this
-// version converts; plainExtension is the smallest one that converts with no unsupported or partial entries.
+// Sample extensions for conversion tests, built in memory.
+// - sampleExtension exercises content scripts (no background).
+// - backgroundExtension has a classic service worker that answers content scripts: messages, a port, tabs.sendMessage,
+//   onInstalled, importScripts.
+// - moduleBackgroundExtension has an ES-module service worker.
+// - plainExtension is the smallest one that converts with no unsupported or partial entries.
 import { strToU8, zipSync } from "fflate";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
 
@@ -71,6 +75,65 @@ if (document.documentElement) markStart(); else document.addEventListener("DOMCo
     "icons/16.png": PIXEL,
     "icons/48.png": PIXEL,
     "unused.txt": "not referenced anywhere",
+  });
+}
+
+/** origin is where the test pages are served. Content scripts run in frames too, so a frame's messages are answered. */
+export function backgroundExtension(origin: string): ExtensionFiles {
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "Background Sample",
+      version: "3.0.0",
+      background: { service_worker: "sw.js" },
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"], all_frames: true }],
+    }),
+    // A classic service worker: importScripts with string literals is inlined when the extension is converted. Its first
+    // line uses an API this version doesn't implement; that call fails, and the rest of the background still runs.
+    "sw.js": `chrome.alarms.create("tick", { periodInMinutes: 1 }).catch(() => {});
+importScripts("lib/helper.js");
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "hello") sendResponse({ text: shout(message.text), tab: typeof sender.tab.id });
+  if (message.type === "ping-me") chrome.tabs.sendMessage(sender.tab.id, { type: "pong", from: "background" });
+});
+chrome.runtime.onConnect.addListener((port) => port.onMessage.addListener((value) => port.postMessage(value * 2)));
+chrome.runtime.onInstalled.addListener((details) => chrome.storage.local.set({ installedReason: details.reason }));
+self.addEventListener("install", () => self.skipWaiting());
+`,
+    "lib/helper.js": "function shout(text) { return text.toUpperCase(); }",
+    "content.js": `const html = document.documentElement;
+chrome.runtime.sendMessage({ type: "hello", text: "x2u" }).then((reply) => { html.dataset.reply = reply.text + "@" + reply.tab; });
+const port = chrome.runtime.connect({ name: "doubler" });
+port.onMessage.addListener((value) => { html.dataset.port = String(value); });
+port.postMessage(21);
+chrome.runtime.onMessage.addListener((message) => { if (message.type === "pong") html.dataset.pong = message.from; });
+chrome.runtime.sendMessage({ type: "ping-me" });
+// onInstalled fires once per installed version; a real manager's profile keeps the stored reason from earlier runs.
+const checkInstalled = () => chrome.storage.local.get("installedReason").then(({ installedReason }) => {
+  if (installedReason) html.dataset.installed = installedReason;
+  else setTimeout(checkInstalled, 200);
+});
+checkInstalled();
+`,
+  });
+}
+
+/** An ES-module service worker that imports a helper and reads import.meta.url. */
+export function moduleBackgroundExtension(origin: string): ExtensionFiles {
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "Module Background",
+      version: "2.0.0",
+      background: { service_worker: "bg/main.js", type: "module" },
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"] }],
+    }),
+    "bg/main.js": `import { label } from "./label.js";
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  sendResponse(label(new URL("icon.png", import.meta.url).pathname));
+});`,
+    "bg/label.js": 'export const label = (path) => "module:" + path;',
+    "content.js": 'chrome.runtime.sendMessage("which").then((reply) => { document.documentElement.dataset.module = reply; });',
   });
 }
 
