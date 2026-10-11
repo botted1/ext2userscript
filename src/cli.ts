@@ -78,7 +78,7 @@ export async function main(argv: readonly string[], out: Output = process.stdout
     };
     let report: Report;
     if (command === "report") {
-      report = await inspect(files, options);
+      report = await inspect(files, { ...options, esbuild: await loadEsbuild() });
     } else {
       const result = await convert(files, { ...options, runtime: await loadRuntime(), esbuild: await loadEsbuild(), minify: values.minify });
       report = result.report;

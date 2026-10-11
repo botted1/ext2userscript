@@ -1,10 +1,11 @@
-// The conversion core (spec §3): convert(files, options) → { userscript, report }. Pure apart from esbuild (used here
-// only for --minify), and the same in the CLI and the web app. inspect() builds the report without the userscript.
+// The conversion core (spec §3): convert(files, options) → { userscript, report }. Pure apart from esbuild (used for
+// module backgrounds and --minify), and the same in the CLI and the web app. inspect() builds the report without the
+// userscript.
 import type { RuntimeConfig } from "../runtime/config.ts";
 import { grantsFor } from "../runtime/gm.ts";
 import { analyze } from "./analyze.ts";
 import { collectAssets } from "./assets.ts";
-import { bundleContent, type ContentCode } from "./bundle.ts";
+import { bundleBackground, bundleContent, type BackgroundBundle, type ContentCode } from "./bundle.ts";
 import { emit } from "./emit.ts";
 import type { EsbuildApi } from "./esbuild.ts";
 import { readManifest } from "./manifest.ts";
@@ -16,7 +17,7 @@ import type { ExtensionFiles } from "./unpack.ts";
 export type ConvertOptions = {
   /** The built runtime (src/convert/runtime-node.ts builds it in Node). */
   runtime: string;
-  /** Needed only with minify. */
+  /** Needed for an ES-module background and for minify. */
   esbuild?: EsbuildApi;
   /** --locale: the locale for the header and for chrome.i18n. */
   locale?: string;
@@ -27,11 +28,11 @@ export type ConvertOptions = {
   extensionId?: string;
 };
 
-export type InspectOptions = Omit<ConvertOptions, "runtime" | "esbuild" | "minify">;
+export type InspectOptions = Omit<ConvertOptions, "runtime" | "minify">;
 
 export async function convert(files: ExtensionFiles, options: ConvertOptions): Promise<{ userscript: string; report: Report }> {
   const prepared = await prepare(files, options);
-  let userscript = emit(prepared.header, options.runtime, prepared.config, prepared.code);
+  let userscript = emit(prepared.header, options.runtime, prepared.config, prepared.code, prepared.background);
   if (options.minify) {
     if (!options.esbuild) throw new Error("convert: minify needs the esbuild option");
     const body = userscript.slice(prepared.header.length);
@@ -44,12 +45,18 @@ export async function inspect(files: ExtensionFiles, options: InspectOptions = {
   return (await prepare(files, options)).report;
 }
 
-async function prepare(files: ExtensionFiles, options: InspectOptions): Promise<{ header: string; config: RuntimeConfig; code: ContentCode[]; report: Report }> {
+async function prepare(
+  files: ExtensionFiles,
+  options: InspectOptions,
+): Promise<{ header: string; config: RuntimeConfig; code: ContentCode[]; background: BackgroundBundle | null; report: Report }> {
   const { model, warnings: manifestWarnings } = readManifest(files, { locale: options.locale });
   const { code, warnings: bundleWarnings } = bundleContent(model, files);
   const scans = code.map((group) => (group?.world === "ISOLATED" ? scan(group.code) : undefined));
-  const { entries, methods } = analyze(model, scans);
-  const assets = collectAssets(model, files, scans.flatMap((result) => result?.urls ?? []), options.ignoreAssets);
+  const background = await bundleBackground(model, files, options.esbuild);
+  const backgroundScan = background.background ? scan(background.background.code) : undefined;
+  const { entries, methods } = analyze(model, scans, backgroundScan ? { scan: backgroundScan, bundle: background } : undefined);
+  const getUrls = [...scans.flatMap((result) => result?.urls ?? []), ...(backgroundScan?.urls ?? [])];
+  const assets = collectAssets(model, files, getUrls, options.ignoreAssets);
   const id = options.extensionId ?? (model.key ? await chromeId(base64Bytes(model.key)) : undefined) ?? model.geckoId ?? (await chromeId(new TextEncoder().encode(model.name)));
   const ns = namespaceOf(model);
   const config: RuntimeConfig = {
@@ -71,14 +78,15 @@ async function prepare(files: ExtensionFiles, options: InspectOptions): Promise<
     locales: model.locales,
     defaultLocale: model.defaultLocale,
     locale: options.locale ? model.locale : undefined,
+    ...(background.background ? { background: { worker: background.background.worker, entry: background.background.entry } } : {}),
   };
   const report: Report = {
     extension: { name: model.name, version: model.version, manifestVersion: model.manifestVersion, id },
     verdict: verdictOf(entries),
     entries: sortEntries(entries),
-    warnings: [...manifestWarnings, ...bundleWarnings, ...assets.warnings],
+    warnings: [...manifestWarnings, ...bundleWarnings, ...background.warnings, ...assets.warnings],
   };
-  return { header: renderMetadata(model, files, ns, grantsFor(methods)), config, code, report };
+  return { header: renderMetadata(model, files, ns, grantsFor(methods)), config, code, background: background.background, report };
 }
 
 const base64Bytes = (base64: string) => Uint8Array.from(atob(base64.replace(/\s+/g, "")), (char) => char.charCodeAt(0));

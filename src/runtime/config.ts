@@ -37,7 +37,25 @@ export type RuntimeConfig = {
   defaultLocale?: string;
   /** Set by --locale: i18n uses this locale instead of the browser's languages. */
   locale?: string;
+  /** The background, if the extension has one: whether it is a service worker, and its entry file (for import.meta.url). */
+  background?: { worker: boolean; entry: string };
 };
+
+/**
+ * The background's code as a factory, called once on the leader tab. Its parameters shadow the globals a background
+ * reaches (spec §3.3); __x2uImportMeta stands in for import.meta in a module background.
+ */
+export type BackgroundCode = (
+  chrome: unknown,
+  browser: unknown,
+  self: unknown,
+  globalThis: unknown,
+  window: unknown,
+  document: unknown,
+  importScripts: unknown,
+  localStorage: unknown,
+  __x2uImportMeta: { url: string },
+) => () => void;
 
 /**
  * One entry per content group, in manifest order: isolated-world code as a factory that takes the chrome and browser
