@@ -39,6 +39,15 @@ describe("bundleBackground", () => {
     assert.match(background?.code ?? "", /\/\* importScripts\("lib\/a\.js"\) \*\//);
   });
 
+  it("keeps the declarations of a script imported inside try/catch visible to the rest of the worker", async () => {
+    const { model, files: all } = extension({ background: { service_worker: "sw.js" } }, {
+      "sw.js": 'try {\n  importScripts("lib.js");\n} catch (e) {\n  console.error(e);\n}\nvar result = [API_BASE, counter, new Thing().kind, helper()];',
+      "lib.js": 'const API_BASE = "https://api.test";\nlet counter = 1;\nclass Thing { get kind() { return "thing"; } }\nfunction helper() { for (let i = 0; i < 2; i++) counter++; return counter; }',
+    });
+    const { background } = await bundleBackground(model, all);
+    assert.deepEqual(new Function(`${background?.code}\nreturn result;`)(), ["https://api.test", 1, "thing", 3]);
+  });
+
   it("keeps a dynamic importScripts, reports it, and warns about missing and self-importing files", async () => {
     const { model, files: all } = extension({ background: { service_worker: "sw.js" } }, {
       "sw.js": 'importScripts(name);\nimportScripts("missing.js", "sw.js");',

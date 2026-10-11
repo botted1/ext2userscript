@@ -45,6 +45,20 @@ export type BackgroundResult = {
   remoteImports: string[];
 };
 
+/**
+ * An imported script's top-level declarations are globals, even when the call is inside a block
+ * (try { importScripts(...) } catch {}). Inlined there, its let, const and class would stay in the block, so they become var.
+ * ponytail: `var X = class X {...}` relies on ASI after the class body, so a next line starting with ( or [ would join it.
+ */
+function asGlobals(code: string): string {
+  let out = code;
+  for (const declaration of scan(code).lexical.sort((a, b) => b.start - a.start)) {
+    const replacement = declaration.keyword === "class" ? `var ${declaration.name} = class` : "var";
+    out = out.slice(0, declaration.start) + replacement + out.slice(declaration.start + declaration.keyword.length);
+  }
+  return out;
+}
+
 export async function bundleBackground(model: Model, files: ExtensionFiles, esbuild?: EsbuildApi): Promise<BackgroundResult> {
   const warnings: string[] = [];
   const remoteImports: string[] = [];
@@ -84,7 +98,8 @@ export async function bundleBackground(model: Model, files: ExtensionFiles, esbu
         }
         return inline(target, base, [...stack, path]);
       });
-      code = `${code.slice(0, call.start)}/* importScripts(${call.urls.map((url) => JSON.stringify(url)).join(", ")}) */\n${parts.join("\n;\n")}\n${code.slice(call.end)}`;
+      const inlined = parts.join("\n;\n");
+      code = `${code.slice(0, call.start)}/* importScripts(${call.urls.map((url) => JSON.stringify(url)).join(", ")}) */\n${call.nested ? asGlobals(inlined) : inlined}\n${code.slice(call.end)}`;
     }
     return code;
   };
