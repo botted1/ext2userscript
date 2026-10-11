@@ -16,7 +16,7 @@ async function main() {
   const gm = createGm();
   const ns = `s4-${params.get("run")}`;
   const me = Number(params.get("id"));
-  const registry = await startRegistry(gm, ns, me, () => ({ url: location.href, title: document.title }), { heartbeatMs: 200, staleMs: 3_000 });
+  const registry = await startRegistry(gm, ns, me, () => ({ url: location.href, title: document.title, frame: false, active: document.visibilityState === "visible", activeAt: 0 }), { heartbeatMs: 200, staleMs: 3_000 });
   const bus = await startBus(gm, ns, registry);
   html.setAttribute("data-leader", "0");
   startElection(registry, { acquire: () => html.setAttribute("data-leader", "1"), lose: () => html.setAttribute("data-leader", "0") }, { graceMs: 300 });

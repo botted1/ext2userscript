@@ -9,6 +9,21 @@ export const ELECTION_TIMING: ElectionTiming = { graceMs: 300 };
 
 export type Election = { isLeader(): boolean; stop(): void };
 
+/** Frames run content scripts but aren't tabs, so they never lead. */
+const tabs = (registry: Registry) => registry.live().filter((tab) => !tab.frame);
+const older = (a: { since: number; id: number }, b: { since: number; id: number }) => a.since < b.since || (a.since === b.since && a.id < b.id);
+
+/**
+ * The tab every tab expects to lead: the oldest live tab, this one included. Messages for the background go here even
+ * while its grace period runs; the receiving runtime holds them until its background starts.
+ */
+export function leaderOf(registry: Registry): number | undefined {
+  const me = registry.self();
+  let best = me.present && !me.frame ? { id: me.id, since: me.since } : undefined;
+  for (const tab of tabs(registry)) if (!best || older(tab, best)) best = tab;
+  return best?.id;
+}
+
 export function startElection(registry: Registry, on: { acquire(): void; lose(): void }, timing: ElectionTiming = ELECTION_TIMING): Election {
   let leader = false;
   let stopped = false;
@@ -16,8 +31,7 @@ export function startElection(registry: Registry, on: { acquire(): void; lose():
 
   const isOldest = (): boolean => {
     const me = registry.self();
-    if (!me.present) return false;
-    return registry.live().every((tab) => tab.since > me.since || (tab.since === me.since && tab.id > me.id));
+    return me.present && !me.frame && tabs(registry).every((tab) => older(me, tab));
   };
   const cancel = () => {
     if (pending !== undefined) clearTimeout(pending);

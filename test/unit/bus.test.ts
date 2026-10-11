@@ -10,7 +10,7 @@ type Tab = { id: number; registry: Registry; bus: Bus; got: Array<{ payload: unk
 
 async function openTab(hub: Hub, id: number): Promise<Tab> {
   const gm = createGm(hub.tab());
-  const registry = await startRegistry(gm, "t", id, () => ({ url: "https://example.com/", title: "t" }), { heartbeatMs: 20, staleMs: 5_000 });
+  const registry = await startRegistry(gm, "t", id, () => ({ url: "https://example.com/", title: "t", frame: false, active: false, activeAt: 0 }), { heartbeatMs: 20, staleMs: 5_000 });
   const bus = await startBus(gm, "t", registry);
   const got: Tab["got"] = [];
   bus.onMessage((payload, from) => got.push({ payload, from }));

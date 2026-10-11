@@ -1,7 +1,7 @@
 # ext2userscript — design
 
 Date: 2026-10-09
-Status: reviewed 2026-10-09; GM-layer revision applied; spike revisions (§5.1, §5.5, §6) approved 2026-10-10; Plan 2 corrections (§3.5, §3.6, §4) applied 2026-10-10
+Status: reviewed 2026-10-09; GM-layer revision applied; spike revisions (§5.1, §5.5, §6) approved 2026-10-10; Plan 2 corrections (§3.5, §3.6, §4) applied 2026-10-10; Plan 3 corrections (§3.3, §5.3, §5.4) applied 2026-10-11
 
 ## 1. Goal
 
@@ -125,7 +125,7 @@ Normalise both MV2 and MV3 into one model:
 Every context is wrapped in one function whose parameters shadow the globals the runtime replaces:
 
 - All contexts: `chrome` and `browser`, both pointing to the same runtime object for that context.
-- Background: `self`, `globalThis` and `importScripts`, bound to a background global shim.
+- Background: `self`, `globalThis`, `window`, `document` and `importScripts`. `self` and `globalThis` are a background global shim. In a service worker, `window` and `document` are `undefined`, as in Chrome; in an MV2 background page, `window` is the shim and `document` is the tab's document.
 - Popup and options: `window`, `document`, `location` and `history`, bound to the UI iframe (§6).
 - Background, popup and options: `localStorage`, bound to the extension-wide storage shim (§5.1), so settings don't land in each site's own storage.
 
@@ -140,7 +140,7 @@ Inside that wrapper, code goes in one of two ways.
   - Options: `bundle: true`, `format: "esm"`, `write: false`, `platform: "browser"`, `target: "es2020"`.
   - A **virtual-fs plugin** resolves every path against the unpacked file map.
   - Dynamic `import()` of a local path is bundled. Dynamic `import()` of a remote URL is reported as unsupported.
-  - The ESM output has no imports left, so its `export` statements are stripped and it is placed inside the wrapper. The wrapper's parameters shadow the globals here too, so no esbuild `inject` is needed.
+  - esbuild bundles to an IIFE, so no `export` statements are left, and the bundle is placed inside the wrapper, whose parameters shadow the globals here too. `import.meta` becomes an object the wrapper passes in, whose `url` is `chrome-extension://<id>/<entry>`; every bundled module sees the entry's URL.
 - **Output:** one string per context. Nothing is minified unless `--minify` is passed, which runs esbuild's minifier over the final file.
 
 ### 3.4 Analyze
@@ -261,21 +261,25 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
   - On first contact with a sender, a tab delivers only messages sent after it started. A new `epoch` (the sender navigated, keeping its tab id) restarts the sequence instead of being ignored.
   - Managers may coalesce rapid writes. If a reader falls more than 64 messages behind, the gap is counted and logged, not hidden.
 - **Discovery:**
-  - Each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, since, ts}` every 2s, and polls `gm.listValues()` for tab keys on the same beat. `since` drives the election (§5.4).
+  - Each tab writes `x2u:<ns>:tab:<tabId>` with `{url, title, frame, active, activeAt, since, ts, heard}` every 2s (`active` and `activeAt` drive `tabs.query({active})` and `onActivated`; `heard` is the newest roster ring the tab has heard), and polls `gm.listValues()` for tab keys on the same beat. `since` drives the election (§5.4).
   - A tab that starts, leaves (`pagehide`) or returns from the back/forward cache (`pageshow`) also writes `x2u:<ns>:roster`. Every tab listens to that key and rescans at once. Without this doorbell, a content script's first message to the background could wait up to 2s.
   - A leaving tab deletes its own key, so the others see it go immediately.
   - A tab whose `ts` is older than 90s counts as gone, which fires `tabs.onRemoved`, and its keys are deleted. The limit is long because Chrome throttles timers in tabs hidden for over 5 minutes to one wake-up per minute; a shorter limit would drop live background tabs.
+  - Every live tab beats as soon as it hears another tab ring. About 1.5 s after a tab rings, a tab that has neither heard that ring nor beaten since is a ghost (it died without `pagehide`, in a crash or when the browser quit) and goes at once, instead of after 90 s. Value-change events reach throttled background tabs promptly; only their timers are throttled.
+  - A content script in an iframe joins as a frame: it sends and receives messages, but it isn't a tab (`tabs.query` skips it) and never leads.
 - **Responses:** a response (`sendResponse` or a returned promise) is just another message with `replyTo`. The default timeout is 30s, after which `lastError` is set to "The message port closed before a response was received."
-- **Tab id:** a random 31-bit integer per tab, kept across same-origin navigations through `sessionStorage`. The ceiling: a cross-origin navigation in the same tab gets a new id, appearing as remove plus create. Upgrade path: a `gm.getTab` method backed by TM's `GM_getTab`.
+- **Resending:** a message for the background whose page leaves before answering is sent again to the new leader, twice at most. A port is opened again there if the first page leaves before its `onConnect` runs; once connected, the page leaving disconnects the port, as in Chrome.
+- **Tab id:** a random 31-bit integer per tab, kept across same-origin navigations through `sessionStorage`. A duplicated tab copies `sessionStorage`, so an id another live page is still beating with is replaced. The ceiling: a cross-origin navigation in the same tab gets a new id, appearing as remove plus create. Upgrade path: a `gm.getTab` method backed by TM's `GM_getTab`.
 
 ### 5.4 Background leader
 - **Election:** the leader is the live tab with the earliest `since` (ties go to the lower id). Every tab computes this from the registry (§5.3).
   - `since` is when the tab joined, or when it rejoined after the back/forward cache, so a returning tab doesn't take leadership back.
   - Every input is a key with a single writer, so the tabs' local copies converge on the same answer. A shared lease key could leave tabs disagreeing about who won after simultaneous claims (for example, session restore opening 20 tabs), with no leader until it expired.
   - A tab starts leading only after it has been the oldest live tab for 300ms, so tabs that start together can't both lead before they've seen each other.
+  - Messages for the background go to the expected leader (the oldest live tab) even during its grace period. It holds them for up to 5 s, until its background has started.
   - A leader that finds an older live tab (for example, one that was frozen and came back) steps down: it stops dispatching messages, alarms and events to background listeners. Timers already started by background code keep running; the ceiling here is that background timers are not cancelled.
   - The 90s staleness limit (§5.3) means a long-hidden leader whose timers are throttled to once a minute keeps the lead.
-- **Handover:** a leader's `pagehide` deletes its registry key and rings the roster (§5.3), so the next-oldest tab takes over at once. A leader that disappears without `pagehide` (crash, tab discard) is replaced when its heartbeat goes stale.
+- **Handover:** a leader's `pagehide` deletes its registry key and rings the roster (§5.3), so the next-oldest tab takes over at once. A leader that disappears without `pagehide` (crash, tab discard) is replaced once the ghost check (§5.3) finds it, about 1.5 s after the next ring (a tab starting, or one becoming visible or navigating), or when its heartbeat goes stale.
 - **New leader:**
   - It runs the background bundle from the top.
   - It fires `runtime.onStartup` only for the first leader of a browser session. The leader writes `x2u:<ns>:session` with a timestamp on every beat; a new leader that finds it missing or older than 90s treats the browser as restarted. The same check clears `storage.session` (§5.2).

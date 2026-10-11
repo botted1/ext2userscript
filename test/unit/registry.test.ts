@@ -5,7 +5,7 @@ import { startRegistry, type Registry, type RegistryTiming } from "../../src/run
 import { createHub } from "../support/gm-hub.ts";
 import { eventually, sleep } from "../support/time.ts";
 
-const page = () => ({ url: "https://example.com/", title: "Example" });
+const page = () => ({ url: "https://example.com/", title: "Example", frame: false, active: false, activeAt: 0 });
 /** Heartbeats far apart: only the roster doorbell can explain fast discovery. */
 const SLOW: RegistryTiming = { heartbeatMs: 10_000, staleMs: 60_000 };
 const FAST: RegistryTiming = { heartbeatMs: 20, staleMs: 150 };

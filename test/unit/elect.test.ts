@@ -16,7 +16,7 @@ type Member = { id: number; registry: Registry; election: Election; events: stri
  * assertion or a timed-out eventually() still stops this member's timers and the run exits.
  */
 async function member(t: TestContext, gm: Gm, id: number, timing: RegistryTiming = FAST, graceMs = 30): Promise<Member> {
-  const registry = await startRegistry(gm, "t", id, () => ({ url: "https://example.com/", title: "t" }), timing);
+  const registry = await startRegistry(gm, "t", id, () => ({ url: "https://example.com/", title: "t", frame: false, active: false, activeAt: 0 }), timing);
   const events: string[] = [];
   const election = startElection(registry, { acquire: () => events.push("acquire"), lose: () => events.push("lose") }, { graceMs });
   t.after(async () => {

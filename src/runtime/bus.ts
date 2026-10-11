@@ -34,12 +34,13 @@ function readOutbox(value: unknown): Outbox | undefined {
   return valid.length > 0 ? { epoch, msgs: valid } : undefined;
 }
 
-export async function startBus(gm: Gm, ns: string, registry: Registry): Promise<Bus> {
+/** handler, when given, is attached before the bus reads any outbox, so the catch-up read reaches it too. */
+export async function startBus(gm: Gm, ns: string, registry: Registry, handler?: (payload: unknown, from: number) => void): Promise<Bus> {
   const k = keys(ns);
   const me = registry.me;
   const startedAt = Date.now();
   const epoch = Math.random().toString(36).slice(2);
-  const handlers: Array<(payload: unknown, from: number) => void> = [];
+  const handlers: Array<(payload: unknown, from: number) => void> = handler ? [handler] : [];
   const ring: Envelope[] = [];
   // Per sender, per epoch: the last seq delivered. Kept after a tab leaves, so a tab that comes back isn't replayed.
   const read = new Map<number, Map<string, number>>();
