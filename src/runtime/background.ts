@@ -32,6 +32,15 @@ const platform = () => {
   return { os, arch: /arm|aarch64/i.test(ua) ? "arm64" : "x86-64", nacl_arch: "x86-64" };
 };
 
+/** Chrome's runtime enums, which background code compares against (details.reason === chrome.runtime.OnInstalledReason.INSTALL). */
+const RUNTIME_ENUMS = {
+  OnInstalledReason: { INSTALL: "install", UPDATE: "update", CHROME_UPDATE: "chrome_update", SHARED_MODULE_UPDATE: "shared_module_update" },
+  OnRestartRequiredReason: { APP_UPDATE: "app_update", OS_UPDATE: "os_update", PERIODIC: "periodic" },
+  PlatformOs: { MAC: "mac", WIN: "win", ANDROID: "android", CROS: "cros", LINUX: "linux", OPENBSD: "openbsd", FUCHSIA: "fuchsia" },
+  PlatformArch: { ARM: "arm", ARM64: "arm64", X86_32: "x86-32", X86_64: "x86-64", MIPS: "mips", MIPS64: "mips64" },
+  PlatformNaclArch: { ARM: "arm", X86_32: "x86-32", X86_64: "x86-64", MIPS: "mips", MIPS64: "mips64" },
+};
+
 export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): void; resume(): void }> {
   const { config, gm, log, assets, messaging } = deps;
   const background = config.background;
@@ -62,6 +71,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     onSuspend: onSuspend.event,
     getPlatformInfo: method(log, async () => platform()),
     setUninstallURL: method(log, async () => {}),
+    ...structuredClone(RUNTIME_ENUMS),
   }, "all");
   const extension = withFallback(log, "extension", {
     getURL,

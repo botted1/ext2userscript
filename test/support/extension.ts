@@ -89,11 +89,13 @@ export function backgroundExtension(origin: string): ExtensionFiles {
       content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"], all_frames: true }],
     }),
     // A classic service worker: importScripts with string literals is inlined when the extension is converted. Its first
-    // line uses an API this version doesn't implement; that call fails, and the rest of the background still runs.
+    // line uses an API this version doesn't implement; that call fails, and the rest of the background still runs. Its
+    // second uses Chrome's enum constants, as MV3 backgrounds commonly do at top level.
     "sw.js": `chrome.alarms.create("tick", { periodInMinutes: 1 }).catch(() => {});
+chrome.storage.session.setAccessLevel({ accessLevel: chrome.storage.AccessLevel.TRUSTED_AND_UNTRUSTED_CONTEXTS });
 importScripts("lib/helper.js");
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "hello") sendResponse({ text: shout(message.text), tab: typeof sender.tab.id });
+  if (message.type === "hello") sendResponse({ text: shout(message.text), tab: typeof sender.tab.id, install: chrome.runtime.OnInstalledReason.INSTALL });
   if (message.type === "ping-me") chrome.tabs.sendMessage(sender.tab.id, { type: "pong", from: "background" });
 });
 chrome.runtime.onConnect.addListener((port) => port.onMessage.addListener((value) => port.postMessage(value * 2)));
@@ -102,7 +104,10 @@ self.addEventListener("install", () => self.skipWaiting());
 `,
     "lib/helper.js": "function shout(text) { return text.toUpperCase(); }",
     "content.js": `const html = document.documentElement;
-chrome.runtime.sendMessage({ type: "hello", text: "x2u" }).then((reply) => { html.dataset.reply = reply.text + "@" + reply.tab; });
+chrome.runtime.sendMessage({ type: "hello", text: "x2u" }).then((reply) => {
+  html.dataset.reply = reply.text + "@" + reply.tab;
+  html.dataset.constant = reply.install;
+});
 const port = chrome.runtime.connect({ name: "doubler" });
 port.onMessage.addListener((value) => { html.dataset.port = String(value); });
 port.postMessage(21);

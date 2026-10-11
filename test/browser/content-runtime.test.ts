@@ -117,6 +117,7 @@ for (const backend of backends) {
       await waitForAttr(tab, "data-port", "42");
       await waitForAttr(tab, "data-pong", "background");
       await waitForAttr(tab, "data-installed", "install");
+      await waitForAttr(tab, "data-constant", "install");
     });
 
     it("answers a frame's content scripts", async () => {

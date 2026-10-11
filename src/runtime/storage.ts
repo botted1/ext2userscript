@@ -123,9 +123,12 @@ export function createStorage(gm: Gm, ns: string, log: Logger) {
         for (const key of await gm.listValues()) if (key.startsWith(prefix)) await gm.deleteValue(key);
       }),
       onChanged: areaChanged[name].event,
-    }, ["getBytesInUse", "getKeys", "setAccessLevel"]);
+      // Every page here is as trusted as the next, so there is no access level to set.
+      setAccessLevel: method(log, async () => {}),
+    }, ["getBytesInUse", "getKeys"]);
   };
 
   const managed = withFallback(log, "storage.managed", {}, ["get", "getBytesInUse", "getKeys", "onChanged"]);
-  return withFallback(log, "storage", { local: area("local"), sync: area("sync"), session: area("session"), managed, onChanged: onChanged.event }, []);
+  const AccessLevel = Object.freeze({ TRUSTED_CONTEXTS: "TRUSTED_CONTEXTS", TRUSTED_AND_UNTRUSTED_CONTEXTS: "TRUSTED_AND_UNTRUSTED_CONTEXTS" });
+  return withFallback(log, "storage", { local: area("local"), sync: area("sync"), session: area("session"), managed, onChanged: onChanged.event, AccessLevel }, []);
 }

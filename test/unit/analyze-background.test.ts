@@ -28,6 +28,17 @@ describe("analyze: the background", () => {
     ]);
   });
 
+  it("reports Chrome's enum constants and storage access levels as supported", () => {
+    const { model } = extension({ background: { service_worker: "sw.js" } }, {});
+    const code = [
+      "chrome.storage.session.setAccessLevel({ accessLevel: chrome.storage.AccessLevel.TRUSTED_AND_UNTRUSTED_CONTEXTS });",
+      "chrome.runtime.onInstalled.addListener((d) => d.reason === chrome.runtime.OnInstalledReason.INSTALL);",
+      "chrome.runtime.getPlatformInfo().then((p) => p.os === chrome.runtime.PlatformOs.MAC);",
+    ].join("\n");
+    const { entries } = analyze(model, [], { scan: scan(code), bundle: { dynamicImportScripts: false, remoteImports: [] } });
+    assert.deepEqual(entries.filter((entry) => entry.status !== "supported").map((entry) => entry.subject), []);
+  });
+
   it("flags dynamic importScripts, remote imports, a background page and persistent: true", () => {
     const { model } = extension({ manifest_version: 2, background: { page: "bg.html", persistent: true } }, { "bg.html": "" });
     const { entries } = analyze(model, [], { scan: scan(""), bundle: { dynamicImportScripts: true, remoteImports: ["https://cdn.test/m.js"] } });

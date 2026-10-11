@@ -11,7 +11,7 @@ export const CONTENT_NAMESPACES: ReadonlySet<string> = new Set(["runtime", "stor
 
 /** Storage areas, and the members src/runtime/storage.ts implements on them. Any other member is reported unsupported. */
 export const STORAGE_AREAS: ReadonlySet<string> = new Set(["local", "sync", "session"]);
-export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "set", "remove", "clear", "onChanged"]);
+export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "set", "remove", "clear", "onChanged", "setAccessLevel"]);
 
 const OLD_MESSAGING = "the MV2 extension.sendRequest messaging isn't converted";
 
@@ -27,6 +27,7 @@ const SHARED: Readonly<Record<string, Support>> = {
   "storage.sync": { status: "supported" },
   "storage.session": { status: "supported" },
   "storage.onChanged": { status: "supported" },
+  "storage.AccessLevel": { status: "supported" },
   "storage.managed": { status: "unsupported", reason: "userscripts have no managed storage" },
   "i18n.getMessage": { status: "supported" },
   "i18n.getUILanguage": { status: "supported" },
@@ -62,6 +63,11 @@ export const BACKGROUND_APIS: Readonly<Record<string, Support>> = {
   "runtime.onInstalled": { status: "supported" },
   "runtime.onStartup": { status: "supported" },
   "runtime.getPlatformInfo": { status: "supported" },
+  "runtime.OnInstalledReason": { status: "supported" },
+  "runtime.OnRestartRequiredReason": { status: "supported" },
+  "runtime.PlatformOs": { status: "supported" },
+  "runtime.PlatformArch": { status: "supported" },
+  "runtime.PlatformNaclArch": { status: "supported" },
   "runtime.onSuspend": { status: "partial", reason: "never fires: the background runs while its tab is open" },
   "runtime.setUninstallURL": { status: "partial", reason: "does nothing: a userscript can't tell when it is removed" },
   "tabs.query": { status: "supported" },
