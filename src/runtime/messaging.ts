@@ -296,10 +296,14 @@ export function createMessaging(deps: MessagingDeps) {
   /** The runtime.* messaging members for content scripts or the background. */
   const runtime = (endpoint: Endpoint) => ({
     sendMessage: (...args: unknown[]) => {
-      const callback = typeof args[args.length - 1] === "function" ? (args.pop() as (response?: unknown) => void) : undefined;
-      // (message), (extensionId, message) or (extensionId, message, options)
-      const external = args.length >= 2 && typeof args[0] === "string" && args[0] !== deps.extensionId;
-      const message = args.length >= 2 ? args[1] : args[0];
+      // (extensionId?, message, options?, callback?), aligned as Chrome aligns them: with two arguments left, the first is
+      // the extension id only if it can be one (a string or null); otherwise the second is options.
+      let last = args.length - 1;
+      const callback = typeof args[last] === "function" ? (args[last--] as (response?: unknown) => void) : undefined;
+      if (last > 1 || (last === 1 && !(args[0] === null || typeof args[0] === "string"))) last--;
+      const message = args[last];
+      const extensionId = last >= 1 ? args[last - 1] : undefined;
+      const external = typeof extensionId === "string" && extensionId !== deps.extensionId;
       // Content scripts reach the background. The background reaches extension pages, and this version has none.
       const target = endpoint === "content" && !external ? deps.leader : () => undefined;
       return send(target, "background", message, endpoint, callback);

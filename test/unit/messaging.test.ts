@@ -45,6 +45,22 @@ async function page(t: TestContext, hub: Hub, id: number, control: (op: string, 
 }
 
 describe("messaging", () => {
+  it("reads sendMessage's arguments as Chrome does: an undefined callback or an options object isn't the message", async (t) => {
+    const hub = createHub();
+    const leader = await page(t, hub, 1);
+    leader.messaging.setBackgroundReady(true);
+    const seen: unknown[] = [];
+    leader.background.onMessage.addListener((message, _sender, sendResponse) => {
+      seen.push(message);
+      sendResponse("ok");
+    });
+    assert.equal(await leader.content.sendMessage({ type: "hello" }, undefined), "ok");
+    assert.equal(await leader.content.sendMessage({ type: "options" }, { includeTlsChannelId: false }), "ok");
+    assert.equal(await leader.content.sendMessage("ext", { type: "with id" }), "ok");
+    assert.equal(await leader.content.sendMessage("ext", { type: "with id and options" }, {}), "ok");
+    assert.deepEqual(seen, [{ type: "hello" }, { type: "options" }, { type: "with id" }, { type: "with id and options" }]);
+  });
+
   it("delivers a content script's message to the leader's background and returns its synchronous response", async (t) => {
     const hub = createHub();
     const leader = await page(t, hub, 1);
