@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { strToU8, zipSync } from "fflate";
+import { Inflate, strToU8, zipSync } from "fflate";
 import { unpack } from "../../src/convert/unpack.ts";
 
 const zip = (files: Record<string, string>) =>
@@ -86,12 +86,14 @@ describe("unpack hardening", () => {
     assert.throws(() => unpack(patchCentral(zip({ "manifest.json": body }), 24, 400)), /manifest\.json fails its CRC check/);
   });
 
-  it("stops inflating an entry as soon as it outgrows its declared size", () => {
+  it("stops inflating an entry as soon as it outgrows its declared size", (t) => {
     // 64 MiB of zeros deflates to about 64 KiB; declaring 10 bytes must not cost 64 MiB of inflating.
+    // The work is measured as deflate input fed to the inflater, not wall-clock time, so machine load can't fail it.
     const archive = patchCentral(zipSync({ "big.bin": new Uint8Array(64 * 1024 * 1024), "manifest.json": strToU8("{}") }), 24, 10);
-    const started = performance.now();
+    const push = t.mock.method(Inflate.prototype, "push");
     assert.throws(() => unpack(archive), /Corrupt or truncated archive \(big\.bin inflates to more than its declared size\)/);
-    assert.ok(performance.now() - started < 100, `took ${Math.round(performance.now() - started)} ms`);
+    const fed = push.mock.calls.reduce((total, call) => total + call.arguments[0].length, 0);
+    assert.ok(fed < archive.length / 2, `fed ${fed} of ${archive.length} archive bytes to the inflater`);
   });
 
   it("rejects encrypted entries", () => {
