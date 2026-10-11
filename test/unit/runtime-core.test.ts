@@ -129,6 +129,15 @@ describe("withFallback", () => {
     assert.equal(runtime.onMessage.hasListeners(), false);
   });
 
+  it("fakes every member when told 'all', as the background needs, but never then or toJSON", async () => {
+    const alarms = withFallback(recorder(), "alarms", {}, "all") as Record<string, unknown>;
+    await assert.rejects((alarms.create as () => Promise<unknown>)(), /chrome\.alarms\.create is not available in userscripts/);
+    assert.equal(typeof (alarms.onAlarm as { addListener: unknown }).addListener, "function");
+    assert.equal("anything" in alarms, true);
+    assert.equal(alarms.then, undefined);
+    assert.equal(alarms.toJSON, undefined);
+  });
+
   it("doesn't fake then or toJSON, so a namespace never looks like a promise", async () => {
     const storage = withFallback(recorder(), "storage", { local: 1 }, []);
     assert.equal((storage as Record<string, unknown>).then, undefined);

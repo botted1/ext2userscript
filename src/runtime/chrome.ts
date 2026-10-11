@@ -82,15 +82,16 @@ export function createEvent<F extends (...args: never[]) => unknown>(log: Logger
     hasListener: (listener) => listeners.has(listener),
     hasListeners: () => listeners.size > 0,
   };
-  const dispatch = (...args: Parameters<F>) => {
-    for (const listener of [...listeners]) {
+  /** Calls every listener; returns what each returned (undefined for one that threw). */
+  const dispatch = (...args: Parameters<F>): unknown[] =>
+    [...listeners].map((listener) => {
       try {
-        listener(...args);
+        return listener(...args);
       } catch (error) {
         log.error("Error in event handler:", error);
+        return undefined;
       }
-    }
-  };
+    });
   return { event, dispatch };
 }
 
@@ -102,11 +103,14 @@ export const unavailable = (api: string) => new Error(`ext2userscript: chrome.${
  * method rejects or calls back with lastError set. Any other missing member is undefined, as in Chrome, so feature
  * detection takes the content-script path.
  */
-export function withFallback<T extends object>(log: Logger, namespace: string, members: T, faked: readonly string[]): T {
+export function withFallback<T extends object>(log: Logger, namespace: string, members: T, faked: readonly string[] | "all"): T {
+  // "all": the background, where Chrome has every API the manifest asks for. `then` and `toJSON` are never faked, so a
+  // namespace never looks like a promise or changes JSON output.
+  const fakes = (property: string) => (faked === "all" ? property !== "then" && property !== "toJSON" : faked.includes(property));
   return new Proxy(members, {
-    has: (target, property) => property in target || (typeof property === "string" && faked.includes(property)),
+    has: (target, property) => property in target || (typeof property === "string" && fakes(property)),
     get(target, property, receiver) {
-      if (typeof property === "symbol" || property in target || !faked.includes(property)) return Reflect.get(target, property, receiver);
+      if (typeof property === "symbol" || property in target || !fakes(property)) return Reflect.get(target, property, receiver);
       const api = `${namespace}.${property}`;
       if (/^on[A-Z]/.test(property)) {
         return {
