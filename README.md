@@ -5,8 +5,9 @@ Convert Chrome and Firefox extensions into userscripts for Tampermonkey and Viol
 ## Usage
 
 Content scripts and the background (service workers, background scripts and pages) are converted today, with
-messaging, ports, tabs, storage and lifecycle events. Popups, options pages and the rest of the extension APIs come
-next, and the report says what didn't convert.
+messaging, ports, tabs, storage, lifecycle events, cross-origin requests, alarms, context menus and the toolbar button
+(as the userscript manager's menu commands), keyboard shortcuts, notifications, cookies, permissions and scripting.
+Popups and options pages come next, and the report says what didn't convert.
 
 ```bash
 npm run cli -- convert <source> [-o out.user.js] [--report report.json] [--locale xx] [--minify] [--ignore-assets glob,...] [--force]

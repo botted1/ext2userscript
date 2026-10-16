@@ -14,7 +14,7 @@ const extension = (manifest: Record<string, unknown>, extra: Record<string, stri
 describe("analyze: the background", () => {
   it("reports background APIs: supported, partial, not converted yet, and never available", async () => {
     const { model, files: all } = extension({ background: { service_worker: "sw.js" } }, {
-      "sw.js": "chrome.runtime.onMessage.addListener(f); chrome.tabs.query({}); chrome.tabs.create({}); chrome.alarms.create('a'); chrome.webRequest.onBeforeRequest.addListener(f); chrome.storage.local.getKeys();",
+      "sw.js": "chrome.runtime.onMessage.addListener(f); chrome.tabs.query({}); chrome.tabs.create({}); chrome.bookmarks.create({}); chrome.webRequest.onBeforeRequest.addListener(f); chrome.storage.local.getKeys();",
     });
     const result = await bundleBackground(model, all);
     const { entries } = analyze(model, [], { scan: scan(result.background?.code ?? ""), bundle: result });
@@ -22,7 +22,7 @@ describe("analyze: the background", () => {
       ["chrome.runtime.onMessage", "supported", ""],
       ["chrome.tabs.query", "supported", ""],
       ["chrome.tabs.create", "partial", "the new tab's id is known only if the userscript runs on its page"],
-      ["chrome.alarms.create", "unsupported", "isn't converted yet"],
+      ["chrome.bookmarks.create", "unsupported", "isn't converted yet"],
       ["chrome.webRequest.onBeforeRequest", "unsupported", "not available in userscripts"],
       ["chrome.storage.local.getKeys", "unsupported", "not implemented yet"],
     ]);
@@ -37,6 +37,31 @@ describe("analyze: the background", () => {
     ].join("\n");
     const { entries } = analyze(model, [], { scan: scan(code), bundle: { dynamicImportScripts: false, remoteImports: [] } });
     assert.deepEqual(entries.filter((entry) => entry.status !== "supported").map((entry) => entry.subject), []);
+  });
+
+  it("reports the APIs this version converts, with the GM grants they need", async () => {
+    const { model, files: all } = extension({ background: { service_worker: "sw.js" } }, {
+      "sw.js": [
+        "chrome.alarms.create('a', { periodInMinutes: 1 }); chrome.commands.getAll(); chrome.permissions.request({});",
+        "chrome.contextMenus.create({}); chrome.action.setBadgeText({}); chrome.action.setIcon({});",
+        "chrome.notifications.create({}); chrome.cookies.get({}); chrome.windows.getAll(); chrome.scripting.executeScript({});",
+      ].join("\n"),
+    });
+    const result = await bundleBackground(model, all);
+    const { entries, methods } = analyze(model, [], { scan: scan(result.background?.code ?? ""), bundle: result });
+    assert.deepEqual(entries.map((entry) => [entry.subject, entry.status]), [
+      ["chrome.alarms.create", "supported"],
+      ["chrome.commands.getAll", "supported"],
+      ["chrome.permissions.request", "partial"],
+      ["chrome.contextMenus.create", "partial"],
+      ["chrome.action.setBadgeText", "partial"],
+      ["chrome.action.setIcon", "partial"],
+      ["chrome.notifications.create", "supported"],
+      ["chrome.cookies.get", "partial"],
+      ["chrome.windows.getAll", "partial"],
+      ["chrome.scripting.executeScript", "partial"],
+    ]);
+    assert.deepEqual([...methods].sort(), ["cookie", "notification", "registerMenuCommand", "unregisterMenuCommand"]);
   });
 
   it("flags dynamic importScripts, remote imports, a background page and persistent: true", () => {

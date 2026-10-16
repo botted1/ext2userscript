@@ -1,6 +1,6 @@
 // The API support table (spec §5.2): the single source of truth for what the runtime implements. The analyzer reads it
 // for the report, and metadata.ts reads the gm methods a row needs for @grant (spec §5.1). It grows with the runtime:
-// this version converts content scripts and the background's core: messaging, tabs, storage, i18n and lifecycle.
+// this version converts content scripts and the background, with every API of spec §5.2 but the popup's.
 import type { GmMethod } from "../runtime/gm.ts";
 import type { Context, Status } from "./report.ts";
 
@@ -51,6 +51,32 @@ export const CONTENT_APIS: Readonly<Record<string, Support>> = {
 };
 
 const NO_PAGES = "it reaches extension pages, and popups and options pages aren't converted yet";
+const MENUS: readonly GmMethod[] = ["registerMenuCommand", "unregisterMenuCommand"];
+
+/** One row per member, all with the same support. */
+const rows = (namespace: string, members: readonly string[], support: Support): Record<string, Support> =>
+  Object.fromEntries(members.map((member) => [`${namespace}.${member}`, support]));
+
+/** chrome.contextMenus, and Firefox's chrome.menus, as the manager's menu commands. */
+const contextMenus = (namespace: string) => ({
+  ...rows(namespace, ["create", "update", "remove", "removeAll", "onClicked"], {
+    status: "partial",
+    reason: "items become the userscript manager's menu commands; ones only for links, images, media or editable fields don't show",
+    methods: MENUS,
+  }),
+  ...rows(namespace, ["ContextType", "ItemType", "ACTION_MENU_TOP_LEVEL_LIMIT"], { status: "supported" }),
+});
+
+/** MV3's action and MV2's browserAction and pageAction: a menu command stands for the toolbar button. */
+const action = (namespace: string) => ({
+  ...rows(namespace, ["onClicked"], { status: "supported", methods: MENUS }),
+  ...rows(namespace, ["getTitle", "getBadgeText", "getBadgeBackgroundColor", "getBadgeTextColor", "enable", "disable", "isEnabled", "show", "hide"], { status: "supported", methods: MENUS }),
+  ...rows(namespace, ["setTitle", "setBadgeText"], { status: "partial", reason: "shown in the menu command's caption", methods: MENUS }),
+  ...rows(namespace, ["setIcon", "setBadgeBackgroundColor", "setBadgeTextColor"], { status: "partial", reason: "there is no toolbar button to show it on" }),
+  ...rows(namespace, ["setPopup", "getPopup"], { status: "partial", reason: "the popup isn't converted yet" }),
+});
+
+const TOP_FRAME = "only the tab's top frame";
 
 /**
  * Background APIs by "<namespace>.<member>". Chrome gives the background every API its manifest asks for, so anything
@@ -84,6 +110,35 @@ export const BACKGROUND_APIS: Readonly<Record<string, Support>> = {
   "tabs.onUpdated": { status: "supported" },
   "tabs.onActivated": { status: "supported" },
   "tabs.TAB_ID_NONE": { status: "supported" },
+  ...rows("tabs", ["executeScript"], { status: "partial", reason: `${TOP_FRAME}; code runs in the page's world, with a null result, where the page's CSP forbids eval` }),
+  ...rows("tabs", ["insertCSS", "removeCSS"], { status: "partial", reason: TOP_FRAME }),
+  "runtime.getBackgroundPage": { status: "supported" },
+  "extension.getBackgroundPage": { status: "supported" },
+  ...rows("alarms", ["create", "get", "getAll", "clear", "clearAll", "onAlarm"], { status: "supported" }),
+  ...contextMenus("contextMenus"),
+  ...contextMenus("menus"),
+  ...action("action"),
+  ...action("browserAction"),
+  ...action("pageAction"),
+  "commands.getAll": { status: "supported" },
+  "commands.onCommand": { status: "partial", reason: "shortcuts work only while a page the userscript runs on has focus" },
+  "commands.onChanged": { status: "partial", reason: "never fires: shortcuts can't be changed" },
+  ...rows("notifications", ["create"], { status: "supported", methods: ["notification"] }),
+  ...rows("notifications", ["update", "clear"], { status: "partial", reason: "a notification already shown can't be changed or taken back", methods: ["notification"] }),
+  ...rows("notifications", ["getAll", "getPermissionLevel", "onClicked", "onClosed", "TemplateType", "PermissionLevel"], { status: "supported" }),
+  ...rows("notifications", ["onButtonClicked", "onPermissionLevelChanged", "onShowSettings"], { status: "partial", reason: "never fires: buttons and settings don't show" }),
+  ...rows("cookies", ["get", "getAll", "set", "remove", "getAllCookieStores"], { status: "partial", reason: "through GM_cookie, so the userscript manager decides which cookies are seen", methods: ["cookie"] }),
+  ...rows("cookies", ["OnChangedCause", "SameSiteStatus"], { status: "supported" }),
+  "cookies.onChanged": { status: "partial", reason: "never fires" },
+  ...rows("permissions", ["contains", "getAll", "remove", "onAdded", "onRemoved"], { status: "supported" }),
+  "permissions.request": { status: "partial", reason: "grants what the manifest lists as optional without asking the user" },
+  ...rows("windows", ["get", "getCurrent", "getLastFocused", "getAll", "create", "update"], { status: "partial", reason: "one window holding every tab" }),
+  ...rows("windows", ["WINDOW_ID_NONE", "WINDOW_ID_CURRENT", "CreateType", "WindowType", "WindowState"], { status: "supported" }),
+  "windows.remove": { status: "partial", reason: "a userscript can't close the browser window" },
+  ...rows("windows", ["onCreated", "onRemoved", "onFocusChanged", "onBoundsChanged"], { status: "partial", reason: "never fires: there is one window" }),
+  "scripting.executeScript": { status: "partial", reason: `${TOP_FRAME}; a function runs in the page's world, without chrome.*, where the page's CSP forbids eval` },
+  ...rows("scripting", ["insertCSS", "removeCSS"], { status: "partial", reason: TOP_FRAME }),
+  ...rows("scripting", ["ExecutionWorld", "StyleOrigin"], { status: "supported" }),
 };
 
 /** APIs a userscript can never provide (spec §1, out of scope). */

@@ -9,7 +9,7 @@ import { convert } from "../../src/convert/index.ts";
 import { loadRuntime } from "../../src/convert/runtime-node.ts";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
 import { readAttr, waitForAttr } from "../support/dom.ts";
-import { backgroundExtension, moduleBackgroundExtension, networkExtension, sampleExtension } from "../support/extension.ts";
+import { apiExtension, backgroundExtension, moduleBackgroundExtension, networkExtension, sampleExtension } from "../support/extension.ts";
 import { startServer, type Server } from "../support/server.ts";
 import { sleep } from "../support/time.ts";
 
@@ -20,6 +20,12 @@ const page = html('<div class="x2u-box">box</div>', "<script>window.pageValue = 
 const connectStrictPage = async () => {
   const response = page();
   response.headers.set("content-security-policy", "connect-src 'self'");
+  return response;
+};
+/** A page whose CSP forbids eval (and inline scripts), as many sites' do. */
+const strictPage = async () => {
+  const response = page();
+  response.headers.set("content-security-policy", "script-src 'self'; object-src 'none'");
   return response;
 };
 
@@ -44,6 +50,7 @@ function harness(backend: (typeof backends)[number], extension: (origin: string)
       "/glob-yes.html": page,
       "/framed.html": html('<iframe src="/child.html"></iframe>'),
       "/child.html": html("child"),
+      "/strict.html": strictPage,
       "/connect-strict.html": connectStrictPage,
       "/api.json": () => Response.json({ from: "api" }),
       "/same.json": () => Response.json({ from: "same" }),
@@ -172,6 +179,51 @@ for (const backend of backends) {
       await waitForAttr(tab, "data-fetch", "api");
       await waitForAttr(tab, "data-xhr", "api:200");
       await waitForAttr(tab, "data-same", "same");
+    });
+  });
+
+  describe(`extension APIs on ${backend}`, () => {
+    const { open, session } = harness(backend, apiExtension);
+
+    it("runs scripting, alarms, permissions, windows, notifications, cookies and getBackgroundPage", async () => {
+      const tab = await open("/page.html");
+      await waitForAttr(tab, "data-inject-title", "x2u");
+      await waitForAttr(tab, "data-injected", "yes");
+      await waitForAttr(tab, "data-file", "string");
+      assert.equal(await tab.locator(".x2u-box").evaluate((box) => getComputedStyle(box).borderTopColor), "rgb(4, 5, 6)");
+      await waitForAttr(tab, "data-apis", "true/false|1:true|hello|true|run-it");
+      await waitForAttr(tab, "data-alarm", "soon");
+      await waitForAttr(tab, "data-cookie", "baked");
+    });
+
+    // The emulator's addElement doesn't get past the page's CSP as the managers' does (spec §10.2), so this runs on them only.
+    it("runs executeScript's function on a page whose CSP forbids eval, in the page's world if it must", { skip: backend === "emulator" }, async () => {
+      const tab = await open("/strict.html");
+      await waitForAttr(tab, "data-inject-title", "x2u");
+      await waitForAttr(tab, "data-injected", "yes");
+      await waitForAttr(tab, "data-file", "string");
+    });
+
+    it("hears the manifest's shortcut on the page", async () => {
+      const tab = await open("/page.html");
+      await waitForAttr(tab, "data-inject-title", "x2u");
+      await tab.keyboard.press("Alt+Shift+K");
+      await waitForAttr(tab, "data-command", "run-it");
+    });
+
+    it("shows context-menu items and the toolbar button as menu commands, and notifications, on the emulator", { skip: backend !== "emulator" }, async () => {
+      const tab = await open("/page.html");
+      await waitForAttr(tab, "data-inject-title", "x2u");
+      const emulator = session().emulator;
+      assert.ok(emulator);
+      for (let tries = 0; tries < 50 && (await emulator.menu(tab)).length < 2; tries++) await sleep(100);
+      assert.deepEqual((await emulator.menu(tab)).sort(), ["Click API Sample", "Say hello"]);
+      assert.equal(await emulator.clickMenu(tab, "Say hello"), true);
+      await waitForAttr(tab, "data-menu", "say");
+      assert.equal(await emulator.clickMenu(tab, "Click API Sample"), true);
+      await waitForAttr(tab, "data-action", "clicked");
+      const shown = (await Promise.all(session().context.pages().map((page) => emulator.notifications(page)))).flat();
+      assert.ok(shown.some((notification) => notification.title === "Hi" && notification.text === "There"));
     });
   });
 }

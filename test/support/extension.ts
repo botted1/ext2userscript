@@ -4,6 +4,8 @@
 //   onInstalled, importScripts.
 // - moduleBackgroundExtension has an ES-module service worker.
 // - networkExtension fetches from another origin, which sends no CORS headers, in the background and content scripts.
+// - apiExtension uses alarms, context menus, the toolbar button, a shortcut, scripting, notifications, cookies,
+//   permissions, windows and getBackgroundPage.
 // - plainExtension is the smallest one that converts with no unsupported or partial entries.
 import { strToU8, zipSync } from "fflate";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
@@ -92,7 +94,7 @@ export function backgroundExtension(origin: string): ExtensionFiles {
     // A classic service worker: importScripts with string literals is inlined when the extension is converted. Its first
     // line uses an API this version doesn't implement; that call fails, and the rest of the background still runs. Its
     // second uses Chrome's enum constants, as MV3 backgrounds commonly do at top level.
-    "sw.js": `chrome.alarms.create("tick", { periodInMinutes: 1 }).catch(() => {});
+    "sw.js": `chrome.bookmarks.create({ title: "x2u" }).catch(() => {});
 chrome.storage.session.setAccessLevel({ accessLevel: chrome.storage.AccessLevel.TRUSTED_AND_UNTRUSTED_CONTEXTS });
 importScripts("lib/helper.js");
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -176,6 +178,76 @@ xhr.onload = () => { html.dataset.xhr = xhr.response.from + ":" + xhr.status; };
 xhr.onerror = () => { html.dataset.xhr = "failed"; };
 xhr.send();
 fetch("/same.json").then((r) => r.json()).then((body) => { html.dataset.same = body.from; });
+`,
+  });
+}
+
+/** origin is where the test pages are served; its page.html has a .x2u-box element and the title "x2u". */
+export function apiExtension(origin: string): ExtensionFiles {
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "API Sample",
+      version: "1.0.0",
+      icons: { "48": "icon.png" },
+      background: { service_worker: "sw.js" },
+      permissions: ["alarms", "contextMenus", "notifications", "scripting", "cookies"],
+      optional_permissions: ["bookmarks"],
+      host_permissions: [`${origin}/*`],
+      action: { default_title: "Click API Sample" },
+      commands: { "run-it": { suggested_key: { default: "Alt+Shift+K" }, description: "Run it" } },
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"] }],
+    }),
+    "icon.png": PIXEL,
+    "sw.js": `chrome.runtime.onInstalled.addListener(() => chrome.contextMenus.removeAll(() => chrome.contextMenus.create({ id: "say", title: "Say hello" })));
+chrome.alarms.create("soon", { delayInMinutes: 0.001 });
+chrome.alarms.onAlarm.addListener((alarm) => chrome.storage.local.set({ alarm: alarm.name }));
+chrome.contextMenus.onClicked.addListener((info, tab) => chrome.tabs.sendMessage(tab.id, { menu: info.menuItemId }));
+chrome.action.onClicked.addListener((tab) => chrome.tabs.sendMessage(tab.id, { action: true }));
+chrome.commands.onCommand.addListener((name, tab) => chrome.tabs.sendMessage(tab.id, { command: name }));
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const target = { tabId: sender.tab.id };
+  if (message === "inject") {
+    chrome.scripting
+      .executeScript({ target, func: (word) => { document.documentElement.dataset.injected = word; return document.title; }, args: ["yes"] })
+      .then(([first]) => chrome.scripting.executeScript({ target, files: ["inject.js"] }).then(() => first.result))
+      .then((title) => chrome.scripting.insertCSS({ target, css: ".x2u-box { border-top-color: rgb(4, 5, 6); }" }).then(() => sendResponse(title)));
+    return true;
+  }
+  if (message === "apis") {
+    Promise.all([
+      // Granted, then removed again, so each run starts without it.
+      chrome.permissions
+        .request({ permissions: ["bookmarks"] })
+        .then(() => chrome.permissions.contains({ permissions: ["bookmarks"] }))
+        .then((granted) => chrome.permissions.remove({ permissions: ["bookmarks"] }).then(() => chrome.permissions.contains({ permissions: ["bookmarks"] })).then((kept) => granted + "/" + kept)),
+      chrome.windows.getCurrent({ populate: true }).then((window) => window.id + ":" + (window.tabs.length > 0)),
+      chrome.notifications.create("hello", { type: "basic", iconUrl: "icon.png", title: "Hi", message: "There" }),
+      chrome.runtime.getBackgroundPage().then((page) => page === self),
+      chrome.commands.getAll().then((all) => all.map((command) => command.name).join()),
+    ]).then((values) => sendResponse(values.join("|")), (error) => sendResponse("failed: " + error.message));
+    return true;
+  }
+  if (message === "cookie") {
+    chrome.cookies
+      .set({ url: "${origin}/", name: "x2u", value: "baked" })
+      .then(() => chrome.cookies.get({ url: "${origin}/", name: "x2u" }))
+      .then((cookie) => sendResponse(cookie && cookie.value), (error) => sendResponse("failed: " + error.message));
+    return true;
+  }
+});`,
+    "inject.js": "document.documentElement.dataset.file = typeof chrome.runtime.id;",
+    "content.js": `const html = document.documentElement;
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.menu) html.dataset.menu = message.menu;
+  if (message.action) html.dataset.action = "clicked";
+  if (message.command) html.dataset.command = message.command;
+});
+chrome.runtime.sendMessage("inject").then((title) => { html.dataset.injectTitle = title; });
+chrome.runtime.sendMessage("apis").then((reply) => { html.dataset.apis = reply; });
+chrome.runtime.sendMessage("cookie").then((reply) => { html.dataset.cookie = reply; });
+const poll = () => chrome.storage.local.get("alarm").then(({ alarm }) => (alarm ? (html.dataset.alarm = alarm) : setTimeout(poll, 200)));
+poll();
 `,
   });
 }
