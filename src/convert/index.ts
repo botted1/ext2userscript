@@ -79,6 +79,9 @@ async function prepare(
     defaultLocale: model.defaultLocale,
     locale: options.locale ? model.locale : undefined,
     ...(background.background ? { background: { worker: background.background.worker, entry: background.background.entry } } : {}),
+    permissions: { api: model.permissions, optionalApi: model.optionalPermissions, origins: model.hostPermissions, optionalOrigins: model.optionalHostPermissions },
+    commands: model.commands,
+    ...(model.action ? { action: { ...model.action, popup: model.popup !== undefined } } : {}),
   };
   const report: Report = {
     extension: { name: model.name, version: model.version, manifestVersion: model.manifestVersion, id },

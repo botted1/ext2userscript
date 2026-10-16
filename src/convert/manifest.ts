@@ -11,6 +11,9 @@ export type ContentGroup = UrlFilter & { js: string[]; css: string[]; runAt: Run
 
 export type Background = { kind: "worker"; entry: string; module: boolean } | { kind: "scripts"; files: string[] } | { kind: "page"; html: string };
 
+/** A keyboard shortcut: its suggested key per platform ("default", "mac", "windows", "linux", "chromeos"). */
+export type Command = { description?: string; keys: Record<string, string> };
+
 export type Model = {
   manifestVersion: 2 | 3;
   name: string;
@@ -27,6 +30,16 @@ export type Model = {
   popup?: { key: string; page: string };
   /** The page and the manifest key it came from: options_ui or options_page. */
   options?: { key: string; page: string };
+  /** The toolbar button: the manifest key it came from (action, browser_action or page_action) and its default title. */
+  action?: { key: string; title?: string };
+  /** API permissions (MV3 permissions, or the MV2 ones that aren't host patterns), required and optional. */
+  permissions: string[];
+  optionalPermissions: string[];
+  /** Host match patterns: MV3 host_permissions, or the MV2 permissions that are patterns; required and optional. */
+  hostPermissions: string[];
+  optionalHostPermissions: string[];
+  /** Keyboard shortcuts by command name. */
+  commands: Record<string, Command>;
   /** Paths and globs, flattened from the MV2 and MV3 forms. */
   webAccessibleResources: string[];
   defaultLocale?: string;
@@ -39,6 +52,9 @@ export type Model = {
 };
 
 const RUN_AT: readonly string[] = ["document_start", "document_end", "document_idle"];
+/** A host permission, as opposed to an API name such as "storage". */
+const HOST_PATTERN = /^(?:<all_urls>$|[a-z*-]+:\/\/)/;
+const ACTION_KEYS = ["action", "browser_action", "page_action"];
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const invalid = (detail: string) => new Error(`Invalid manifest.json: ${detail}`);
@@ -106,6 +122,12 @@ export function readManifest(files: ExtensionFiles, options: { locale?: string }
     warnings.push(`${isObject(raw.browser_specific_settings) ? "browser_specific_settings" : "applications"}.gecko.id isn't a valid add-on ID, so it was ignored`);
     geckoId = undefined;
   }
+  // Chrome skips permission entries it doesn't know, so anything but a string is left out rather than refused.
+  const listed = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  const required = listed(raw.permissions);
+  const optional = listed(raw.optional_permissions);
+  const actionKey = ACTION_KEYS.find((key) => isObject(raw[key]));
+  const actionSection = actionKey === undefined ? undefined : (raw[actionKey] as Record<string, unknown>);
 
   return {
     model: {
@@ -120,6 +142,12 @@ export function readManifest(files: ExtensionFiles, options: { locale?: string }
       contentScripts: contentScripts(raw.content_scripts),
       popup: page(raw, ["action", "browser_action", "page_action"], "default_popup"),
       options: page(raw, ["options_ui"], "page") ?? (typeof raw.options_page === "string" ? { key: "options_page", page: filePath(raw.options_page, "options_page") } : undefined),
+      ...(actionKey && actionSection ? { action: { key: actionKey, ...(text(actionSection.default_title) ? { title: text(actionSection.default_title) } : {}) } } : {}),
+      permissions: required.filter((entry) => !HOST_PATTERN.test(entry)),
+      optionalPermissions: optional.filter((entry) => !HOST_PATTERN.test(entry)),
+      hostPermissions: [...required.filter((entry) => HOST_PATTERN.test(entry)), ...listed(raw.host_permissions)],
+      optionalHostPermissions: [...optional.filter((entry) => HOST_PATTERN.test(entry)), ...listed(raw.optional_host_permissions)],
+      commands: commands(raw.commands, text),
       webAccessibleResources: webAccessibleResources(raw.web_accessible_resources),
       defaultLocale,
       locales,
@@ -225,6 +253,18 @@ function contentScripts(value: unknown): ContentGroup[] {
       world,
     };
   });
+}
+
+function commands(value: unknown, text: (value: unknown) => string): Record<string, Command> {
+  const out: Record<string, Command> = {};
+  if (!isObject(value)) return out;
+  for (const [name, entry] of Object.entries(value)) {
+    if (!isObject(entry)) continue;
+    const suggested = entry.suggested_key;
+    const keys = typeof suggested === "string" ? { default: suggested } : isObject(suggested) ? Object.fromEntries(Object.entries(suggested).filter((pair): pair is [string, string] => typeof pair[1] === "string")) : {};
+    out[name] = { ...(text(entry.description) ? { description: text(entry.description) } : {}), keys };
+  }
+  return out;
 }
 
 function page(raw: Record<string, unknown>, keys: readonly string[], field: string): { key: string; page: string } | undefined {

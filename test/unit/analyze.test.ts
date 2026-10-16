@@ -56,6 +56,13 @@ describe("analyze", () => {
     ]);
   });
 
+  it("reports host permissions as supported, needing GM_xmlhttpRequest for the network shim", () => {
+    const { entries, methods } = analyze(model({ content_scripts: [group], optional_host_permissions: ["https://api.test/*"] }), []);
+    assert.deepEqual(entries.map((entry) => [entry.subject, entry.status, entry.contexts]), [["manifest.host_permissions", "supported", ["content"]]]);
+    assert.deepEqual([...methods], ["xmlHttpRequest"]);
+    assert.deepEqual([...analyze(model({ content_scripts: [group] }), []).methods], []);
+  });
+
   it("skips groups without a scan (no JS, or the MAIN world)", () => {
     assert.deepEqual(analyze(model({ content_scripts: [group, group] }), [undefined, undefined]).entries, []);
   });

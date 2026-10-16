@@ -15,6 +15,19 @@ export function namespaceOf(model: Model): string {
   return model.geckoId ?? `x2u-${slugify(model.name)}`;
 }
 
+/**
+ * @connect lines for the host permissions, required and optional: the network shim sends requests for these hosts
+ * through GM_xmlhttpRequest, which Tampermonkey checks against @connect. A pattern for any host becomes *.
+ */
+export function connectHosts(patterns: readonly string[]): string[] {
+  const hosts = new Set<string>();
+  for (const pattern of patterns) {
+    const host = pattern === "<all_urls>" ? "*" : /^[a-z*-]+:\/\/([^/]*)/.exec(pattern)?.[1]?.replace(/:(?:\d+|\*)$/, "");
+    if (host) hosts.add(host === "*" ? "*" : host.replace(/^\*\./, ""));
+  }
+  return hosts.has("*") ? ["*"] : [...hosts];
+}
+
 export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, grants: readonly string[]): string {
   // Every value goes through oneLine: a line break in any of them would start a header line of its own.
   const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
@@ -33,6 +46,7 @@ export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, 
   lines.push(["run-at", runAt.replace("_", "-")]);
   if (!groups.some((group) => group.allFrames)) lines.push(["noframes", ""]);
   lines.push(["sandbox", "DOM"], ["inject-into", "content"]);
+  for (const host of connectHosts([...model.hostPermissions, ...model.optionalHostPermissions])) lines.push(["connect", host]);
   for (const grant of grants) lines.push(["grant", grant]);
   return ["// ==UserScript==", ...lines.map(([key, value]) => `// @${key.padEnd(12)} ${oneLine(value)}`.trimEnd()), "// ==/UserScript=="].join("\n");
 }

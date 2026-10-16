@@ -34,6 +34,29 @@ describe("readManifest", () => {
     assert.deepEqual(read({ ...mv3, options_page: "o.html" }).model.options, { key: "options_page", page: "o.html" });
   });
 
+  it("splits permissions into API names and host patterns, from MV2 and MV3, required and optional", () => {
+    const mv2 = read({ ...mv3, manifest_version: 2, permissions: ["storage", "https://a.test/*", "<all_urls>", { fileSystem: ["write"] }], optional_permissions: ["cookies", "*://b.test/*"] }).model;
+    assert.deepEqual([mv2.permissions, mv2.hostPermissions, mv2.optionalPermissions, mv2.optionalHostPermissions], [["storage"], ["https://a.test/*", "<all_urls>"], ["cookies"], ["*://b.test/*"]]);
+    const v3 = read({ ...mv3, permissions: ["alarms"], host_permissions: ["https://c.test/*"], optional_host_permissions: ["https://d.test/*"] }).model;
+    assert.deepEqual([v3.permissions, v3.hostPermissions, v3.optionalPermissions, v3.optionalHostPermissions], [["alarms"], ["https://c.test/*"], [], ["https://d.test/*"]]);
+  });
+
+  it("reads keyboard shortcuts and the toolbar button, resolving __MSG_x__ in their text", () => {
+    const { model } = read(
+      {
+        ...mv3,
+        default_locale: "en",
+        action: { default_title: "__MSG_title__" },
+        commands: { "toggle": { suggested_key: { default: "Ctrl+Shift+Y", mac: "Command+Shift+Y" }, description: "__MSG_toggle__" }, "_execute_action": { suggested_key: "Alt+Shift+P" }, "bad": 1 },
+      },
+      { "_locales/en/messages.json": JSON.stringify({ title: { message: "Click me" }, toggle: { message: "Toggle it" } }) },
+    );
+    assert.deepEqual(model.action, { key: "action", title: "Click me" });
+    assert.deepEqual(model.commands, { toggle: { description: "Toggle it", keys: { default: "Ctrl+Shift+Y", mac: "Command+Shift+Y" } }, _execute_action: { keys: { default: "Alt+Shift+P" } } });
+    assert.deepEqual(read({ ...mv3, manifest_version: 2, page_action: {} }).model.action, { key: "page_action" });
+    assert.equal(read(mv3).model.action, undefined);
+  });
+
   it("flattens web_accessible_resources from MV2 and MV3", () => {
     assert.deepEqual(read({ ...mv3, web_accessible_resources: [{ resources: ["/img/*", "a.js"], matches: ["<all_urls>"] }] }).model.webAccessibleResources, ["img/*", "a.js"]);
     assert.deepEqual(read({ ...mv3, manifest_version: 2, web_accessible_resources: ["x.png"] }).model.webAccessibleResources, ["x.png"]);

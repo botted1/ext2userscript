@@ -66,6 +66,14 @@ describe("renderMetadata", () => {
     assert.equal(values(header({ content_scripts: [{ matches: ["<all_urls>"], all_frames: true }] }), "noframes").length, 0);
   });
 
+  it("adds @connect for each host permission's host, required and optional, and * when any host will do", () => {
+    const text = header({ host_permissions: ["https://*.a.test/*", "http://localhost:8080/*", "file:///*"], optional_host_permissions: ["*://b.test/*"] });
+    assert.deepEqual(values(text, "connect"), ["a.test", "localhost", "b.test"]);
+    assert.deepEqual(values(header({ host_permissions: ["https://a.test/*", "<all_urls>"] }), "connect"), ["*"]);
+    assert.deepEqual(values(header({ manifest_version: 2, permissions: ["*://*/*", "tabs"] }), "connect"), ["*"]);
+    assert.deepEqual(values(header({}), "connect"), []);
+  });
+
   it("uses the smallest icon of at least 32px, else the largest, as a data URL", () => {
     const icons = { icons: { "16": "i16.png", "48": "i48.png", "128": "i128.svg" } };
     assert.deepEqual(values(header(icons, { "i16.png": PIXEL, "i48.png": PIXEL, "i128.svg": "<svg/>" }), "icon"), [`data:image/png;base64,${btoa(String.fromCharCode(...PIXEL))}`]);

@@ -1,7 +1,7 @@
 # ext2userscript — design
 
 Date: 2026-10-09
-Status: reviewed 2026-10-09; GM-layer revision applied; spike revisions (§5.1, §5.5, §6) approved 2026-10-10; Plan 2 corrections (§3.5, §3.6, §4) applied 2026-10-10; Plan 3 corrections (§3.3, §5.3, §5.4) applied 2026-10-11
+Status: reviewed 2026-10-09; GM-layer revision applied; spike revisions (§5.1, §5.5, §6) approved 2026-10-10; Plan 2 corrections (§3.5, §3.6, §4) applied 2026-10-10; Plan 3 corrections (§3.3, §5.3, §5.4) applied 2026-10-11; Plan 3b corrections (§1, §3.3, §3.6, §4, §5.2) applied 2026-10-15
 
 ## 1. Goal
 
@@ -20,7 +20,7 @@ A public, open-source converter that turns a browser extension (Chrome or Firefo
 | Audience | Public open-source tool, general purpose |
 | Target managers (v1) | Tampermonkey + Violentmonkey only. Other managers are on the Later list below. |
 | Delivery | One conversion core shared by a static web app (conversion runs in the browser, nothing is uploaded) and an npm CLI |
-| Approach | Build-time bundling (esbuild) plus a separately tested runtime. No `with` wrapper, no runtime `eval` of extension code. |
+| Approach | Build-time bundling (esbuild) plus a separately tested runtime. No `with` wrapper, and no runtime `eval` of extension code, except the function or code string that `scripting.executeScript` and `tabs.executeScript` send to a tab (§5.2). |
 | GM access | Every GM call goes through `src/runtime/gm.ts` (§5.1): async-only, three capability flags (`valueListeners`, `menus`, `cookies`), a TM/VM implementation only, no fallback code yet. `@grant` lines are generated from it, and the CI emulator stands in for TM/VM behind it. |
 | Benchmark | Two tiers: the emulator behind `gm.ts` in CI, plus real TM/VM before each release |
 | Name | `ext2userscript` (npm package, CLI command, repo folder) |
@@ -126,6 +126,7 @@ Every context is wrapped in one function whose parameters shadow the globals the
 
 - All contexts: `chrome` and `browser`, both pointing to the same runtime object for that context.
 - Background: `self`, `globalThis`, `window`, `document` and `importScripts`. `self` and `globalThis` are a background global shim. In a service worker, `window` and `document` are `undefined`, as in Chrome; in an MV2 background page, `window` is the shim and `document` is the tab's document.
+- Background and content scripts: `fetch` and `XMLHttpRequest`, the network shim (§5.2). A service worker gets `XMLHttpRequest` undefined, as in Chrome.
 - Popup and options: `window`, `document`, `location` and `history`, bound to the UI iframe (§6).
 - Background, popup and options: `localStorage`, bound to the extension-wide storage shim (§5.1), so settings don't land in each site's own storage.
 
@@ -172,7 +173,7 @@ How the verdict is derived:
 The CLI prints a table and can write `--report report.json`. The web app renders the same data.
 
 ### 3.6 Assets
-- **Collected:** every file referenced from `runtime.getURL` string literals, CSS `url()`, and HTML `src`/`href`/`srcset`, plus all of `web_accessible_resources`.
+- **Collected:** every file referenced from `runtime.getURL` string literals, CSS `url()`, and HTML `src`/`href`/`srcset`, plus all of `web_accessible_resources`. With a background, also the manifest's icons (for notifications), the files it fetches by relative URL, and the style sheets it names (for `insertCSS`). The scripts it names are bundled like content scripts, for `scripting.executeScript({ files })`.
 - **Locales:** every `_locales/<locale>/messages.json` goes into the runtime config as parsed JSON, not into the asset table, because `i18n.getMessage` picks the locale in the browser.
 - **Excluded:** files matching `--ignore-assets <glob,...>`.
 - **Stored:** as base64 in an asset table, with the MIME type taken from the extension.
@@ -189,7 +190,7 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 | `exclude_matches` | `@exclude-match` for the patterns every group excludes; the runtime applies the rest |
 | `include_globs` / `exclude_globs` | not in the header; the runtime applies them. An `@include` adds URLs to the `@match` list instead of narrowing it, and an `@exclude` would also hide pages other groups match. |
 | no content scripts at all (popup/background-only extension) | `@match *://*/*`, with the UI reachable through the menu only |
-| host permissions | `@connect` per host (`*` for `<all_urls>`) |
+| host permissions, required and optional | `@connect` per host (`*` when any host will do) |
 | earliest `run_at` | `@run-at` |
 | no group with `all_frames: true` | `@noframes` |
 | isolated world | `@inject-into content` (VM), `@sandbox DOM` (TM). Spike S1 verifies GM_* stays available. |
@@ -237,21 +238,21 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 | `tabs.query` / `get` / `getCurrent` / `sendMessage` / `create` / `update(url)` / `remove` / `reload` | supported | Tab registry (§5.3). `create` uses `gm.openInTab`. `remove` and `update` work by messaging the target tab, which calls `window.close()` or sets `location`. `close` only works for tabs opened by the script; otherwise the report says partial. |
 | `tabs.onUpdated` / `onRemoved` / `onCreated` / `onActivated` | supported | Derived from registry changes. `onActivated` uses `visibilitychange`. |
 | `windows.*` | partial | One synthetic window (id 1) |
-| `scripting.executeScript` (`func` or `files`) / `insertCSS` / `removeCSS` | supported | Run in the target tab via the bus |
-| `tabs.executeScript` / `insertCSS` (MV2) | supported | Same path as above |
+| `scripting.executeScript` (`func` or `files`) / `insertCSS` / `removeCSS` | partial | Run in the target tab's top frame via the bus. `files` are bundled at build time. A `func` runs through `new Function`, or, where the page's CSP forbids eval (Tampermonkey's sandbox follows it), in the page's world through `gm.addElement`, without `chrome.*`. |
+| `tabs.executeScript` / `insertCSS` / `removeCSS` (MV2) | partial | Same path as above; `code` that can't be evaluated runs in the page's world with a null result |
 | `alarms.*` | supported | Persisted schedule; fired by the background leader |
-| `contextMenus` / `menus` | partial | Each item becomes a `gm.registerMenuCommand` entry. `onClicked` receives `{menuItemId, pageUrl}` but no selection or link context. |
-| `action` / `browserAction` / `pageAction` `.onClicked`, `openPopup` | supported | Menu command "Open <name>" |
-| `action.setBadgeText` / `setIcon` / `setTitle` | partial | Stored; shown in the popup modal title. No toolbar UI exists. |
-| `commands.onCommand` + manifest `commands` | supported | `keydown` listener on each tab, mapping suggested keys per platform |
-| `notifications.create` / `clear` / `onClicked` | supported | `gm.notification` |
+| `contextMenus` / `menus` | partial | Each item becomes a `gm.registerMenuCommand` entry in every tab, kept in a GM value. `onClicked` receives `{menuItemId, pageUrl}` and any selected text, but no link or media context; items only for links, images, media or editable fields don't show. |
+| `action` / `browserAction` / `pageAction` `.onClicked`; `openPopup` | supported; with the popup (§6) | A button without a popup is a menu command named after its title; one with a popup gets "Open <name>" (§6) |
+| `action.setBadgeText` / `setIcon` / `setTitle` | partial | Stored. The title and badge show in the menu command's caption; there is no toolbar to show the icon on. |
+| `commands.onCommand` + manifest `commands` | partial | `keydown` listener on each page, mapping suggested keys per platform: a shortcut works only while such a page has focus |
+| `notifications.create` / `onClicked` / `onClosed`; `update` / `clear` | supported; partial | `gm.notification` on the leader's tab. A notification already shown can't be changed or taken back, and buttons don't show. |
 | `i18n.getMessage` / `getUILanguage` / `detectLanguage` | supported / supported / unsupported | |
 | `permissions.contains` / `getAll` / `request` / `remove` | partial | Answers come from the manifest. `request` resolves true, and removals persist in GM storage. |
 | `cookies.*` | partial | `gm.cookie`, which needs `caps.cookies` (TM, and VM since 2.35.1; VM returns httpOnly cookies only when the user enables that). Where it's missing, the calls reject (§5.1). |
 | `extension.getBackgroundPage`, `runtime.getBackgroundPage` | partial | Works only when the current tab is the leader; otherwise rejects |
 | `webRequest`, `declarativeNetRequest`, `proxy`, `identity`, `offscreen`, `sidePanel`, `devtools`, `debugger`, `tabCapture`, `downloads` | unsupported | Reject with `Error("ext2userscript: chrome.X is not available in userscripts")`, logged once |
 
-Network: `fetch` and `XMLHttpRequest` in the background and content contexts are shimmed, so that cross-origin requests to `host_permissions` hosts go through `gm.xmlHttpRequest`. Same-origin requests use the native implementation. Responses support `text`, `json`, `blob` and `arrayBuffer`. Streaming bodies are a known ceiling: they are buffered.
+Network: `fetch` and `XMLHttpRequest` in the background and content contexts are shimmed, so that cross-origin requests to `host_permissions` hosts go through `gm.xmlHttpRequest`. Same-origin requests use the native implementation. Responses support `text`, `json`, `blob` and `arrayBuffer`. Streaming bodies are a known ceiling: they are buffered. Extension URLs (`chrome-extension://<id>/…`, which a background's relative URLs resolve to) are served from the asset table. A request to a host the extension has permission for carries cookies unless it sets `credentials: "omit"`. More ceilings: uploads report no progress, a synchronous `XMLHttpRequest` can't go through `gm.xmlHttpRequest`, and `window.fetch` called explicitly from a content script isn't shimmed.
 
 ### 5.3 Messaging
 - **In-tab:** content ↔ popup/options ↔ background (when this tab is the leader) is delivered directly through an in-memory bus with structured clone semantics (`structuredClone`).

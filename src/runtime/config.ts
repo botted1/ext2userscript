@@ -39,6 +39,15 @@ export type RuntimeConfig = {
   locale?: string;
   /** The background, if the extension has one: whether it is a service worker, and its entry file (for import.meta.url). */
   background?: { worker: boolean; entry: string };
+  /**
+   * The manifest's permissions: API names and host match patterns, required and optional. chrome.permissions answers
+   * from them, and the network shim sends requests for these hosts through gm.xmlHttpRequest.
+   */
+  permissions?: { api: string[]; optionalApi: string[]; origins: string[]; optionalOrigins: string[] };
+  /** Keyboard shortcuts by command name: the suggested key per platform ("default", "mac", …) and the description. */
+  commands?: Record<string, { description?: string; keys: Record<string, string> }>;
+  /** The toolbar button (action, browser_action or page_action), if the manifest has one, and whether it has a popup. */
+  action?: { key: string; title?: string; popup: boolean };
 };
 
 /**
