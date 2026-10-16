@@ -6,6 +6,7 @@
 import { createAlarms } from "./alarms.ts";
 import type { Assets } from "./assets.ts";
 import { createEvent, createLogger, method, readLastError, withFallback, type Logger } from "./chrome.ts";
+import { createCommands, EXECUTE_ACTION } from "./commands.ts";
 import type { BackgroundCode, RuntimeConfig } from "./config.ts";
 import type { Gm } from "./gm.ts";
 import { createBackgroundGlobal } from "./global.ts";
@@ -56,6 +57,13 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
   const menus = await createMenus({ gm, ns: config.ns, log, config, persistent });
   messaging.onEvent("menu-click", (data, sender) => menus.click(data as MenuClick, sender.tab));
   messaging.onEvent("action-click", (_data, sender) => menus.actionClick(sender.tab));
+  const commands = createCommands(config, log);
+  messaging.onEvent("command", (data, sender) => {
+    const { name } = data as { name: string };
+    // _execute_action opens the popup when there is one (not converted yet), and clicks the button otherwise.
+    if (!EXECUTE_ACTION.has(name)) commands.fire(name, sender.tab);
+    else if (!config.action?.popup) menus.actionClick(sender.tab);
+  });
   let active = true;
   // While it leads, the session stamp stays fresh, so a new leader in this browser session doesn't fire onStartup.
   setInterval(() => {
@@ -96,6 +104,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     tabs: withFallback(log, "tabs", deps.tabs, "all"),
     extension,
     alarms: withFallback(log, "alarms", alarms.api, "all"),
+    commands: withFallback(log, "commands", commands.api, "all"),
     contextMenus: withFallback(log, "contextMenus", menus.contextMenus, "all"),
     menus: withFallback(log, "menus", menus.contextMenus, "all"),
     // MV3's action, and MV2's browserAction and pageAction: one toolbar button, shown as a menu command.

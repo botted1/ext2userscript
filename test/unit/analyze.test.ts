@@ -45,14 +45,14 @@ describe("analyze", () => {
 
   it("reports the pages and manifest features this version doesn't convert", () => {
     const { entries } = analyze(
-      model({ background: { service_worker: "sw.js" }, action: { default_popup: "p.html" }, options_ui: { page: "o.html" }, chrome_url_overrides: { newtab: "n.html" }, commands: {} }),
+      model({ background: { service_worker: "sw.js" }, action: { default_popup: "p.html" }, options_ui: { page: "o.html" }, chrome_url_overrides: { newtab: "n.html" }, commands: { go: { suggested_key: "Alt+G" } } }),
       [],
     );
     assert.deepEqual(entries.map((entry) => [entry.subject, entry.status, entry.contexts]), [
+      ["manifest.commands", "partial", ["background"]],
       ["manifest.action.default_popup", "unsupported", ["popup"]],
       ["manifest.options_ui", "unsupported", ["options"]],
       ["manifest.chrome_url_overrides", "unsupported", ["background"]],
-      ["manifest.commands", "unsupported", ["background"]],
     ]);
   });
 

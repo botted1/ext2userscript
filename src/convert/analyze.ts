@@ -75,6 +75,7 @@ export function analyze(model: Model, scans: ReadonlyArray<ScanResult | undefine
   const raw = model.raw.background as { persistent?: unknown } | undefined;
   if (model.background?.kind === "page") add("manifest.background.page", "partial", "the page's scripts run, but its HTML isn't created", "background");
   if (raw?.persistent === true) add("manifest.background.persistent", "partial", "the background starts over whenever it moves to another tab", "background");
+  if (Object.keys(model.commands).length > 0) add("manifest.commands", "partial", "shortcuts work only while a page the userscript runs on has focus", "background");
   // The network shim reaches these hosts through gm.xmlHttpRequest, in the background and in content scripts.
   if (model.hostPermissions.length + model.optionalHostPermissions.length > 0) {
     use("manifest.host_permissions", { status: "supported", methods: ["xmlHttpRequest"] }, model.background ? "background" : "content");

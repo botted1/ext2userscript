@@ -99,5 +99,4 @@ export const UNSUPPORTED_MANIFEST_KEYS: Readonly<Record<string, { reason: string
   sidebar_action: { reason: "a userscript can't open the sidebar", context: "background" },
   declarative_net_request: { reason: "a userscript can't block or change network requests", context: "background" },
   omnibox: { reason: "a userscript can't add address-bar keywords", context: "background" },
-  commands: { reason: "keyboard shortcuts aren't converted yet", context: "background" },
 };

@@ -13,6 +13,7 @@ import { createI18n } from "./i18n.ts";
 import { tabIdentity } from "./identity.ts";
 import { showMenus } from "./menus.ts";
 import { createMessaging } from "./messaging.ts";
+import { listenForCommands } from "./commands.ts";
 import { createNetwork } from "./net.ts";
 import { startRegistry, type Registry, type TabInfo, type TabState } from "./registry.ts";
 import { startBus } from "./bus.ts";
@@ -62,6 +63,8 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
     });
     // Without a background, a message for it fails at once instead of waiting for one to start.
     if (!background) messaging.setBackgroundReady(true);
+    // The manifest's keyboard shortcuts, in every frame: a shortcut pressed before this page has joined waits for it.
+    else listenForCommands(window, config, messaging.emit, log);
 
     const runtime = withFallback(log, "runtime", {
       id: config.id,
