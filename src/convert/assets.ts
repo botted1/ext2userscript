@@ -1,5 +1,6 @@
 // The asset table (spec §3.6): the extension files the runtime can hand out as blob: URLs. Collected from getURL string
-// literals in the content scripts, url() in their CSS, and web_accessible_resources; minus --ignore-assets globs.
+// literals, url() in content CSS, the manifest's icons (when there is a background) and web_accessible_resources; minus
+// --ignore-assets globs.
 // Content CSS is rewritten so each url() names its file through a placeholder the runtime resolves.
 // Locales don't go here: every messages.json is in the runtime config already, as parsed JSON.
 import { ASSET_PREFIX } from "../runtime/assets.ts";
@@ -46,6 +47,8 @@ export function collectAssets(model: Model, files: ExtensionFiles, getUrls: read
       warnings.push(`runtime.getURL("${url}") points outside the extension`);
     }
   }
+  // The extension's icons, which a background's notifications usually show.
+  if (model.background) for (const path of Object.values(model.icons)) include(path, "icons");
   for (const resource of model.webAccessibleResources) {
     const glob = pathGlob(resource);
     for (const path of files.keys()) if (glob.test(path) && !ignored.some((ignore) => ignore.test(path))) wanted.add(path);

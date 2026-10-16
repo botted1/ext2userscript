@@ -7,6 +7,7 @@ import { createAlarms } from "./alarms.ts";
 import type { Assets } from "./assets.ts";
 import { createEvent, createLogger, method, readLastError, withFallback, type Logger } from "./chrome.ts";
 import { createCommands, EXECUTE_ACTION } from "./commands.ts";
+import { createCookies } from "./cookies.ts";
 import type { BackgroundCode, RuntimeConfig } from "./config.ts";
 import type { Gm } from "./gm.ts";
 import { createBackgroundGlobal } from "./global.ts";
@@ -16,7 +17,10 @@ import { createLocalStorage } from "./local-storage.ts";
 import { createMenus, type MenuClick } from "./menus.ts";
 import type { Messaging } from "./messaging.ts";
 import { createNetwork } from "./net.ts";
+import { createNotifications } from "./notifications.ts";
+import { createPermissions } from "./permissions.ts";
 import { REGISTRY_TIMING } from "./registry.ts";
+import { createWindows } from "./windows.ts";
 
 export type BackgroundDeps = {
   config: RuntimeConfig;
@@ -70,6 +74,9 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     if (active) void gm.setValue(keys(config.ns).session, { t: Date.now() });
   }, REGISTRY_TIMING.heartbeatMs);
 
+  const permissions = await createPermissions(gm, config.ns, log, config);
+  // The background's global object, for getBackgroundPage; it exists once the code below has made it.
+  let backgroundGlobal: unknown;
   const onInstalled = createEvent<(details: object) => void>(log);
   const onStartup = createEvent<() => void>(log);
   const onSuspend = createEvent<() => void>(log);
@@ -88,10 +95,12 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     onSuspend: onSuspend.event,
     getPlatformInfo: method(log, async () => platform()),
     setUninstallURL: method(log, async () => {}),
+    getBackgroundPage: method(log, async () => backgroundGlobal),
     ...structuredClone(RUNTIME_ENUMS),
   }, "all");
   const extension = withFallback(log, "extension", {
     getURL,
+    getBackgroundPage: () => backgroundGlobal,
     inIncognitoContext: false,
     get lastError() {
       return readLastError();
@@ -105,6 +114,10 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     extension,
     alarms: withFallback(log, "alarms", alarms.api, "all"),
     commands: withFallback(log, "commands", commands.api, "all"),
+    notifications: withFallback(log, "notifications", createNotifications({ gm, log, dataUrl: assets.dataUrl }), "all"),
+    cookies: withFallback(log, "cookies", createCookies(gm, log), "all"),
+    permissions: withFallback(log, "permissions", permissions, "all"),
+    windows: withFallback(log, "windows", createWindows(deps.tabs as Parameters<typeof createWindows>[0], log), "all"),
     contextMenus: withFallback(log, "contextMenus", menus.contextMenus, "all"),
     menus: withFallback(log, "menus", menus.contextMenus, "all"),
     // MV3's action, and MV2's browserAction and pageAction: one toolbar button, shown as a menu command.
@@ -140,6 +153,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
   });
   const XMLHttpRequest = background.worker ? undefined : network.XMLHttpRequest;
   const { global, fire } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage, fetch: network.fetch, XMLHttpRequest });
+  backgroundGlobal = global;
   try {
     deps.code(
       chrome,

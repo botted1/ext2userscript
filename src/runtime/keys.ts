@@ -21,5 +21,7 @@ export function keys(ns: string) {
     alarms: `x2u:${ns}:alarms`,
     /** Context-menu items and the toolbar button's state, which every tab shows as menu commands. */
     menus: `x2u:${ns}:menus`,
+    /** Optional permissions chrome.permissions.request granted, and not removed since. */
+    permissions: `x2u:${ns}:permissions`,
   };
 }

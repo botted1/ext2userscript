@@ -37,6 +37,11 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
     /** The asset path behind a blob URL this table handed out. */
     pathOf: (blobUrl: string) => paths.get(blobUrl),
     text: (path: string) => (table[path] ? new TextDecoder().decode(decode(table[path][1])) : undefined),
+    /** The file as a data: URL, for a consumer outside the page that can't load its blob: URLs (a manager's notification). */
+    dataUrl: (path: string) => {
+      const entry = table[toPath(path)];
+      return entry ? `data:${entry[0]};base64,${entry[1]}` : undefined;
+    },
     /** Resolves asset placeholders and __MSG_name__ in a content group's CSS, as Chrome does for extension CSS. */
     css: (text: string) =>
       text
