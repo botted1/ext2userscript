@@ -37,7 +37,8 @@ describe("listenForCommands", () => {
   it("tells the background about a shortcut, using this platform's key, and keeps it from the page", async () => {
     const page = new EventTarget();
     const sent: unknown[] = [];
-    listenForCommands(page, config, async (type, data) => void sent.push([type, data]), createLogger("test"), "mac");
+    // Events made here aren't trusted, so the test counts them as the user's.
+    listenForCommands(page, config, async (type, data) => void sent.push([type, data]), createLogger("test"), "mac", () => true);
     const pageSaw: string[] = [];
     page.addEventListener("keydown", (event) => pageSaw.push((event as Event & { code: string }).code));
     const matching = key("KeyY", { ctrlKey: true, shiftKey: true });
@@ -48,6 +49,17 @@ describe("listenForCommands", () => {
     assert.deepEqual(sent, [["command", { name: "toggle" }], ["command", { name: "next" }]]);
     assert.equal(matching.defaultPrevented, true);
     assert.deepEqual(pageSaw, ["KeyY"]);
+  });
+});
+
+describe("listenForCommands and the page", () => {
+  it("ignores a key event the page made up, so only the user can fire a shortcut", () => {
+    const page = new EventTarget();
+    const sent: unknown[] = [];
+    listenForCommands(page, config, async (type, data) => void sent.push([type, data]), createLogger("test"), "mac");
+    const forged = key("KeyY", { ctrlKey: true, shiftKey: true });
+    page.dispatchEvent(forged);
+    assert.deepEqual([sent, forged.defaultPrevented], [[], false]);
   });
 });
 

@@ -56,13 +56,24 @@ function shortcuts(config: RuntimeConfig, platform: string): Array<[name: string
   });
 }
 
-/** Listens on this page for the extension's shortcuts. A shortcut is the extension's, so the page doesn't see it. */
-export function listenForCommands(target: EventTarget, config: RuntimeConfig, emit: (type: string, data: unknown) => Promise<void>, log: Logger, platform = commandPlatform()): void {
+/**
+ * Listens on this page for the extension's shortcuts. A shortcut is the extension's, so the page doesn't see it; and only
+ * the user's key presses count (isUserEvent), so the page can't fire one by making up a key event.
+ */
+export function listenForCommands(
+  target: EventTarget,
+  config: RuntimeConfig,
+  emit: (type: string, data: unknown) => Promise<void>,
+  log: Logger,
+  platform = commandPlatform(),
+  isUserEvent = (event: Event) => event.isTrusted,
+): void {
   const wanted = shortcuts(config, platform);
   if (wanted.length === 0) return;
   target.addEventListener(
     "keydown",
     (event) => {
+      if (!isUserEvent(event)) return;
       const key = event as KeyEventLike;
       const found = wanted.find(([, shortcut]) => matches(key, shortcut));
       if (!found) return;
