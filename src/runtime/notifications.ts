@@ -1,7 +1,8 @@
 // chrome.notifications (spec §5.2) through gm.notification, on the leader's tab. A notification's text is its message,
 // context message and list items; its icon is an extension file or a URL.
-// Ceilings: a shown notification can't be taken back, so clear and update only forget it; buttons and progress don't
-// show, so onButtonClicked never fires; a click reaches onClicked only while the leader's tab is open.
+// update shows it again under the same tag, which the managers treat as a replacement.
+// Ceilings: a shown notification can't be taken back, so clear only forgets it; buttons and progress don't show, so
+// onButtonClicked never fires; a click reaches onClicked only while the leader's tab is open.
 import { createEvent, method, type Logger } from "./chrome.ts";
 import type { Gm } from "./gm.ts";
 
@@ -21,19 +22,27 @@ export function createNotifications(deps: { gm: Gm; log: Logger; dataUrl(path: s
   const onButtonClicked = createEvent<(id: string, button: number) => void>(log);
   const onPermissionLevelChanged = createEvent<(level: string) => void>(log);
   const shown = new Map<string, Options>();
+  /** Which showing of each id is current, so a replaced one closing doesn't report the id closed. */
+  const showings = new Map<string, number>();
+  let showing = 0;
 
   /** An extension path becomes a data: URL the manager can load; a URL stays as it is. */
   const image = (url?: string) => (url === undefined ? undefined : /^(?:https?|data|blob):/i.test(url) ? url : (deps.dataUrl(url.replace(/^chrome-extension:\/\/[^/]+\//, "")) ?? undefined));
 
   const show = async (id: string, options: Options) => {
     shown.set(id, options);
+    const mine = ++showing;
+    showings.set(id, mine);
     const text = [options.message, options.contextMessage, ...(options.items ?? []).map((item) => `${item.title}: ${item.message}`)].filter(Boolean).join("\n");
     await deps.gm.notification({
       title: options.title ?? "",
       text: text || " ",
       image: image(options.iconUrl),
+      tag: id,
       onclick: () => onClicked.dispatch(id),
       ondone: () => {
+        if (showings.get(id) !== mine) return;
+        showings.delete(id);
         if (shown.delete(id)) onClosed.dispatch(id, true);
       },
     });

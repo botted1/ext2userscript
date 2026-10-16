@@ -74,7 +74,7 @@ export type GmApi = {
   GM_xmlhttpRequest?(details: GmXhrDetails): { abort(): void };
   GM_addElement?(...args: [parent: Node, tag: string, attributes: Record<string, string>] | [tag: string, attributes: Record<string, string>]): Element;
   GM_openInTab?(url: string, options: { active: boolean; insert: boolean }): GmTabHandle;
-  GM_notification?(details: { text: string; title?: string; image?: string; onclick?: () => void; ondone?: () => void }): unknown;
+  GM_notification?(details: { text: string; title?: string; image?: string; tag?: string; onclick?: () => void; ondone?: () => void }): unknown;
   GM_cookie?: {
     list(details: CookieDetails, callback: (cookies: GmCookie[], error?: unknown) => void): void;
     set(details: CookieDetails, callback: (error?: unknown) => void): void;
@@ -134,7 +134,8 @@ export type XhrRequest = {
 
 export type TabControl = { close(): void; readonly closed: boolean; onClose(fn: () => void): void };
 
-export type GmNotification = { text: string; title?: string; image?: string; onclick?: () => void; ondone?: () => void };
+/** tag: a notification shown again with the same tag replaces the earlier one (both managers). */
+export type GmNotification = { text: string; title?: string; image?: string; tag?: string; onclick?: () => void; ondone?: () => void };
 
 export type Gm = {
   readonly caps: Caps;
@@ -248,7 +249,7 @@ export function createGm(api: GmApi = readManagerApi()): Gm {
     openInTab: (url, options = {}) => now(() => wrapTab(need("GM_openInTab")(url, { active: options.active ?? true, insert: true }))),
     notification: (n) =>
       now(() => {
-        need("GM_notification")({ text: n.text, title: n.title, image: n.image, onclick: n.onclick, ondone: n.ondone });
+        need("GM_notification")({ text: n.text, title: n.title, image: n.image, ...(n.tag === undefined ? {} : { tag: n.tag }), onclick: n.onclick, ondone: n.ondone });
       }),
     cookie: {
       list: (details) => viaCallback<GmCookie[]>((done) => need("GM_cookie").list(details, (cookies, error) => done(error, cookies))),

@@ -33,6 +33,23 @@ describe("notifications", () => {
   });
 });
 
+describe("notifications.update", () => {
+  it("replaces the notification under the same tag, and reports only the current one closing", async () => {
+    const shown: Array<{ title?: string; text: string; tag?: string; ondone?: () => void }> = [];
+    const gm = createGm({ GM_notification: (details) => void shown.push(details) });
+    const api = createNotifications({ gm, log, dataUrl: () => undefined }) as unknown as Api & { onClosed: { addListener(fn: (id: string) => void): void } };
+    const closed: string[] = [];
+    api.onClosed.addListener((id) => closed.push(id));
+    await api.create("progress", { title: "Copying", message: "10%" });
+    assert.equal(await api.update("progress", { message: "90%" }), true);
+    assert.deepEqual(shown.map((details) => [details.tag, details.text]), [["progress", "10%"], ["progress", "90%"]]);
+    shown[0].ondone?.(); // the replaced one going away
+    assert.deepEqual(closed, []);
+    shown[1].ondone?.();
+    assert.deepEqual(closed, ["progress"]);
+  });
+});
+
 describe("cookies", () => {
   it("reads and writes cookies through GM_cookie in Chrome's shape, picking the longest path for get", async () => {
     const jar: GmCookie[] = [
