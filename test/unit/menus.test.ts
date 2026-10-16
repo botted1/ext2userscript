@@ -40,6 +40,7 @@ async function setup(extra: Partial<RuntimeConfig> = {}, persistent = false) {
     ns: "t",
     log: createLogger("test"),
     config: config(extra),
+    tabId: () => tabInfo.id,
     emit: async (type, data) => (type === "menu-click" ? background.click(data as MenuClick, tabInfo) : background.actionClick(tabInfo)),
   });
   const menus = background.contextMenus as unknown as Record<string, (...args: unknown[]) => unknown> & { onClicked: { addListener(fn: (info: Record<string, unknown>, tab: unknown) => void): void } };
@@ -114,6 +115,19 @@ describe("toolbar button", () => {
     await eventually(() => tab.captions().length === 0, 1000);
     assert.equal(await action.isEnabled(), false);
     assert.equal(await action.getTitle({}), "Do it");
+  });
+
+  it("keeps a page action hidden until it is shown on a tab, and a tab's own title and badge to that tab", async () => {
+    const { action, tab } = await setup({ action: { key: "page_action", title: "Page", popup: false } });
+    await action.show(8);
+    await action.setBadgeText({ text: "5", tabId: 8 });
+    assert.deepEqual(tab.captions(), [], "shown on another tab only");
+    await action.show(7);
+    await eventually(() => tab.captions().includes("Page"), 1000);
+    await action.setBadgeText({ text: "2", tabId: 7 });
+    await eventually(() => tab.captions().includes("Page (2)"), 1000);
+    assert.deepEqual([await action.getBadgeText({ tabId: 7 }), await action.getBadgeText({ tabId: 8 }), await action.getBadgeText({})], ["2", "5", ""]);
+    assert.deepEqual([await action.isEnabled(7), await action.isEnabled(9)], [true, false]);
   });
 
   it("shows no command for a button with a popup, or for an extension without a button", async () => {

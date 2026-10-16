@@ -26,8 +26,11 @@ export type MenuItem = {
   generated?: boolean;
 };
 
-/** What the toolbar button shows; undefined fields fall back to the manifest. */
-export type ActionState = { title?: string; badge?: string; enabled: boolean; popup?: string };
+/**
+ * What the toolbar button shows; undefined fields fall back to the manifest. tabs holds what was set for one tab (by
+ * tabId), which wins there. Ceiling: a tab keeps its settings across a same-origin navigation, which Chrome resets.
+ */
+export type ActionState = { title?: string; badge?: string; enabled: boolean; popup?: string; tabs?: Record<string, Partial<Omit<ActionState, "tabs">>> };
 
 export type MenuState = { items: MenuItem[]; action: ActionState };
 
@@ -51,7 +54,8 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
   const onActionClicked = createEvent<(tab: unknown) => void>(log);
   const onclick = new Map<string, (info: unknown, tab: unknown) => void>();
   const stored = await gm.getValue<MenuState>(key);
-  const state: MenuState = { items: Array.isArray(stored?.items) ? stored.items : [], action: stored?.action ?? { enabled: true } };
+  // A page action shows only on the tabs it is shown on; a browser action or action shows everywhere until disabled.
+  const state: MenuState = { items: Array.isArray(stored?.items) ? stored.items : [], action: stored?.action ?? { enabled: deps.config.action?.key !== "page_action" } };
   // A persistent background page creates its menu every time it starts, as Chrome starts it with an empty one.
   if (deps.persistent) state.items = [];
   // Items without an id lived with the page that made them.
@@ -137,18 +141,26 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
     onClicked: onClicked.event,
   };
 
-  const setAction = (patch: Partial<ActionState>) => {
-    Object.assign(state.action, patch);
+  /** Sets the button's state, for one tab when tabId is given. */
+  const setAction = (patch: Partial<Omit<ActionState, "tabs">>, tabId?: unknown) => {
+    if (typeof tabId === "number") {
+      state.action.tabs ??= {};
+      state.action.tabs[tabId] = { ...state.action.tabs[tabId], ...patch };
+    } else {
+      Object.assign(state.action, patch);
+    }
     return save();
   };
+  /** The button's state on one tab, or everywhere when tabId isn't a number. */
+  const effective = (tabId?: unknown): ActionState => ({ ...state.action, ...(typeof tabId === "number" ? state.action.tabs?.[tabId] : {}) });
   const defaultTitle = deps.config.action?.title ?? deps.config.name;
   const badgeColors = { background: [0, 0, 0, 0] as unknown, text: [255, 255, 255, 255] as unknown };
   const action = {
     onClicked: onActionClicked.event,
-    setTitle: method(log, (details: { title?: string } = {}) => setAction({ title: details.title ?? undefined })),
-    getTitle: method(log, async () => state.action.title ?? defaultTitle),
-    setBadgeText: method(log, (details: { text?: string } = {}) => setAction({ badge: details.text || undefined })),
-    getBadgeText: method(log, async () => state.action.badge ?? ""),
+    setTitle: method(log, (details: { title?: string; tabId?: number } = {}) => setAction({ title: details.title ?? undefined }, details.tabId)),
+    getTitle: method(log, async (details: { tabId?: number } = {}) => effective(details.tabId).title ?? defaultTitle),
+    setBadgeText: method(log, (details: { text?: string; tabId?: number } = {}) => setAction({ badge: details.text || undefined }, details.tabId)),
+    getBadgeText: method(log, async (details: { tabId?: number } = {}) => effective(details.tabId).badge ?? ""),
     setBadgeBackgroundColor: method(log, async (details: { color?: unknown } = {}) => void (badgeColors.background = details.color)),
     getBadgeBackgroundColor: method(log, async () => badgeColors.background),
     setBadgeTextColor: method(log, async (details: { color?: unknown } = {}) => void (badgeColors.text = details.color)),
@@ -156,12 +168,12 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
     setIcon: method(log, async () => {}),
     setPopup: method(log, (details: { popup?: string } = {}) => setAction({ popup: details.popup || undefined })),
     getPopup: method(log, async () => state.action.popup ?? ""),
-    enable: method(log, () => setAction({ enabled: true })),
-    disable: method(log, () => setAction({ enabled: false })),
-    isEnabled: method(log, async () => state.action.enabled),
+    enable: method(log, (tabId?: number) => setAction({ enabled: true }, tabId)),
+    disable: method(log, (tabId?: number) => setAction({ enabled: false }, tabId)),
+    isEnabled: method(log, async (tabId?: number) => effective(tabId).enabled),
     // pageAction's names for the same thing.
-    show: method(log, () => setAction({ enabled: true })),
-    hide: method(log, () => setAction({ enabled: false })),
+    show: method(log, (tabId?: number) => setAction({ enabled: true }, tabId)),
+    hide: method(log, (tabId?: number) => setAction({ enabled: false }, tabId)),
   };
 
   return {
@@ -191,14 +203,17 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
  * popup and is enabled) and one per context-menu item this page can show. emit tells the background about a click.
  * Top frames only: a manager shows one menu per tab.
  */
-export async function showMenus(deps: { gm: Gm; ns: string; log: Logger; config: RuntimeConfig; emit(type: string, data: unknown): Promise<void> }) {
+export async function showMenus(deps: { gm: Gm; ns: string; log: Logger; config: RuntimeConfig; tabId(): number | undefined; emit(type: string, data: unknown): Promise<void> }) {
   const { gm, log, config } = deps;
   const key = keys(deps.ns).menus;
   let registered: Array<number | string> = [];
 
   const render = async (state: MenuState | undefined) => {
     const commands: Array<[caption: string, onClick: () => void]> = [];
-    const action = state?.action ?? { enabled: true };
+    // This tab's own settings for the button win over the ones for every tab.
+    const shared = state?.action ?? { enabled: config.action?.key !== "page_action" };
+    const tab = deps.tabId();
+    const action: ActionState = { ...shared, ...(tab === undefined ? {} : shared.tabs?.[tab]) };
     if (config.action && !config.action.popup && !action.popup && action.enabled) {
       const title = action.title ?? config.action.title ?? config.name;
       commands.push([action.badge ? `${title} (${action.badge})` : title, () => void deps.emit("action-click", null).catch((error: unknown) => log.error(error))]);

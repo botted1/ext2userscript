@@ -138,7 +138,7 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
 
       if (frame || !background) return;
       // The background's context-menu items and toolbar button, as this tab's menu commands.
-      void showMenus({ gm, ns: config.ns, log, config, emit: messaging.emit });
+      void showMenus({ gm, ns: config.ns, log, config, tabId: () => joined.me, emit: messaging.emit });
       let handle: { pause(): void; resume(): void } | undefined;
       let starting = false;
       startElection(joined, {
