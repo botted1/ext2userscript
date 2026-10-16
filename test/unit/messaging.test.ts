@@ -119,6 +119,39 @@ describe("messaging", () => {
     assert.equal(await reply, "started");
   });
 
+  it("carries a page's event to its handler in the leader's background, held until the background starts", async (t) => {
+    const hub = createHub();
+    const leader = await page(t, hub, 1);
+    await sleep(5);
+    const other = await page(t, hub, 2);
+    other.messaging.setBackgroundReady(true);
+    const seen: unknown[] = [];
+    const delivered = other.messaging.emit("menu-click", { id: "item" });
+    await sleep(30);
+    leader.messaging.onEvent("menu-click", (data, sender) => seen.push([data, (sender.tab as { id: number }).id]));
+    leader.messaging.setBackgroundReady(true);
+    await delivered;
+    assert.deepEqual(seen, [[{ id: "item" }, 2]]);
+    // An event nobody handles is dropped quietly.
+    await other.messaging.emit("unknown", null);
+  });
+
+  it("sends a page's event again to the new leader when the page it went to goes away unanswered", async (t) => {
+    const hub = createHub();
+    const ghost = await page(t, hub, 1);
+    await sleep(5);
+    const live = await page(t, hub, 2);
+    live.messaging.setBackgroundReady(true);
+    const seen: unknown[] = [];
+    live.messaging.onEvent("command", (data) => seen.push(data));
+    await eventually(() => live.registry.live().length === 1, 1000);
+    const delivered = live.messaging.emit("command", { name: "run-it" });
+    await sleep(30);
+    await ghost.registry.leave();
+    await delivered;
+    assert.deepEqual(seen, [{ name: "run-it" }]);
+  });
+
   it("sends a background message again when the page it went to goes away unanswered", async (t) => {
     const hub = createHub();
     // A ghost leader: an old tab whose key outlived it. It never answers; the next oldest page should.

@@ -1,7 +1,8 @@
 // Extension messaging (spec §5.3). Every page runs one router. It carries:
 // - runtime.sendMessage / onMessage and runtime.connect / onConnect, between content scripts and the background;
 // - tabs.sendMessage / tabs.connect, from the background to one tab's content scripts;
-// - control requests the tabs API sends to another tab (navigate, reload, close).
+// - control requests the tabs API sends to another tab (navigate, reload, close);
+// - events a page sends its background for the user's actions there: a menu command, a keyboard shortcut.
 // Everything travels as JSON over the cross-tab bus. A message for this same page goes through the bus too, which
 // delivers it in a microtask, so delivery is always asynchronous and always a copy, as in Chrome.
 import { callWithLastError, createEvent, type ChromeEvent, type Logger } from "./chrome.ts";
@@ -18,7 +19,8 @@ type Wire =
   | { k: "post"; port: string; side: Side; data: unknown }
   | { k: "close"; port: string; side: Side; error?: string }
   | { k: "accepted"; port: string }
-  | { k: "ctl"; id: string; op: string; args: unknown };
+  | { k: "ctl"; id: string; op: string; args: unknown }
+  | { k: "evt"; id: string; type: string; data: unknown; sender: MessageSender };
 
 export const NO_RECEIVER = "Could not establish connection. Receiving end does not exist.";
 export const PORT_CLOSED = "The message port closed before a response was received.";
@@ -84,6 +86,8 @@ export function createMessaging(deps: MessagingDeps) {
     content: { message: createEvent<MessageListener>(log), connect: createEvent<(port: Port) => void>(log) },
     background: { message: createEvent<MessageListener>(log), connect: createEvent<(port: Port) => void>(log) },
   };
+  /** The background's handlers for events pages send it, by type. */
+  const eventHandlers = new Map<string, (data: unknown, sender: MessageSender) => void>();
 
   /** Sends once the bus is up and the target is known; noTarget runs when there is nobody to send to. */
   const post = (target: () => number | undefined, wire: Wire | (() => Wire), noTarget?: () => void, onTarget?: (to: number) => void) => {
@@ -243,15 +247,25 @@ export function createMessaging(deps: MessagingDeps) {
     post(() => from, { k: "accepted", port: wire.port });
   };
 
-  const refuse = (wire: Wire & { k: "msg" | "open" }, from: number) =>
-    post(() => from, wire.k === "msg" ? { k: "reply", id: wire.id, error: NO_RECEIVER } : { k: "close", port: wire.port, side: "opener", error: NO_RECEIVER });
+  const refuse = (wire: Wire & { k: "msg" | "open" | "evt" }, from: number) =>
+    post(() => from, wire.k === "open" ? { k: "close", port: wire.port, side: "opener", error: NO_RECEIVER } : { k: "reply", id: wire.id, error: NO_RECEIVER });
+
+  const onEvent = (wire: Wire & { k: "evt" }, from: number) => {
+    try {
+      eventHandlers.get(wire.type)?.(wire.data, wire.sender);
+    } catch (error) {
+      log.error(error);
+    }
+    post(() => from, { k: "reply", id: wire.id });
+  };
 
   const handle = (payload: unknown, from: number): void => {
     const wire = payload as Wire;
     switch (wire.k) {
       case "msg":
       case "open":
-        if (wire.to === "background" && !backgroundReady) {
+      case "evt":
+        if ((wire.k === "evt" || wire.to === "background") && !backgroundReady) {
           const entry = {
             wire,
             from,
@@ -265,6 +279,7 @@ export function createMessaging(deps: MessagingDeps) {
           };
           held.push(entry);
         } else if (wire.k === "msg") onMessage(wire, from);
+        else if (wire.k === "evt") onEvent(wire, from);
         else onOpen(wire, from);
         return;
       case "reply":
@@ -345,6 +360,19 @@ export function createMessaging(deps: MessagingDeps) {
         return send(tab(tabId), "content", message, "background", callback);
       },
       connect: (tabId: number, info?: { name?: string }) => connect(tab(tabId), "content", info?.name ?? "", "background"),
+    },
+    /**
+     * Tells the background about something the user did on this page (a menu command, a keyboard shortcut). It is held
+     * and sent again like a message for the background; it resolves once the background has handled it.
+     */
+    emit: async (type: string, data: unknown): Promise<void> => {
+      const id = nextId();
+      const outcome = await request(deps.leader, id, () => ({ k: "evt", id, type, data, sender: deps.sender("content") }), true);
+      if (outcome.error !== undefined) throw new Error(outcome.error);
+    },
+    /** The background's handler for one type of event from pages. */
+    onEvent: (type: string, handler: (data: unknown, sender: MessageSender) => void) => {
+      eventHandlers.set(type, handler);
     },
     /** Asks another page to run a control request (the tabs API's update, reload and remove). */
     control: async (tabId: number, op: string, args: unknown): Promise<unknown> => {

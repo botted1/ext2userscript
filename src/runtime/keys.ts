@@ -17,5 +17,7 @@ export function keys(ns: string) {
     installed: `x2u:${ns}:installed`,
     /** Written by the leader on every beat; missing or stale means the browser restarted (spec §5.4). */
     session: `x2u:${ns}:session`,
+    /** The alarms' schedule (spec §5.2), which the leader's background keeps. */
+    alarms: `x2u:${ns}:alarms`,
   };
 }

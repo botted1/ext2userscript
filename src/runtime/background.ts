@@ -3,6 +3,7 @@
 // runtime.onInstalled / onStartup. A leader that steps down pauses: messages and events stop reaching the background's
 // listeners (its timers keep running, a ceiling the spec accepts); if it leads again, it resumes without running the
 // code a second time.
+import { createAlarms } from "./alarms.ts";
 import type { Assets } from "./assets.ts";
 import { createEvent, createLogger, method, readLastError, withFallback, type Logger } from "./chrome.ts";
 import type { BackgroundCode, RuntimeConfig } from "./config.ts";
@@ -48,6 +49,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
   if (!background) throw new Error("startBackground: this extension has no background");
   const lifecycle = await checkLifecycle(gm, config.ns, String((config.manifest as { version?: unknown }).version ?? ""));
   const localStorage = await createLocalStorage(gm, config.ns, log);
+  const alarms = await createAlarms(gm, config.ns, log);
   let active = true;
   // While it leads, the session stamp stays fresh, so a new leader in this browser session doesn't fire onStartup.
   setInterval(() => {
@@ -87,6 +89,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     i18n: deps.i18n,
     tabs: withFallback(log, "tabs", deps.tabs, "all"),
     extension,
+    alarms: withFallback(log, "alarms", alarms.api, "all"),
   };
   // The background has every API the manifest asks for. Ones this version doesn't implement fail with a named error when
   // used, so top-level code that sets them up (chrome.alarms.create(...)) doesn't stop the rest of the background.
@@ -148,10 +151,12 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     pause: () => {
       active = false;
       messaging.setBackgroundReady(false);
+      alarms.pause();
     },
     resume: () => {
       active = true;
       messaging.setBackgroundReady(true);
+      void alarms.resume();
     },
   };
 }
