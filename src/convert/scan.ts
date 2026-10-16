@@ -13,6 +13,8 @@ export type ScanResult = {
   urls: string[];
   /** String literals passed to fetch(...) (or self.fetch and the like), as written: a background's relative URLs are extension files. */
   fetches: string[];
+  /** String literals that look like a script or style sheet's path ("content.js", "/css/a.css"): files a background may inject. */
+  files: string[];
   dynamicImport: boolean;
   /**
    * importScripts(...) calls: where each is in the code, its URLs when every argument is a string literal, and whether
@@ -34,13 +36,14 @@ const GLOBAL_OWNERS = new Set(["window", "globalThis", "self"]);
 
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
-  const result: ScanResult = { chains: [], urls: [], fetches: [], dynamicImport: false, importScripts: [], lexical: [] };
+  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], dynamicImport: false, importScripts: [], lexical: [] };
   const isDot = (token: Token | undefined) => token?.kind === "punct" && (token.value === "." || token.value === "?.");
   let brackets = 0; // open ( and [
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token.kind === "punct" && (token.value === "(" || token.value === "[")) brackets++;
     else if (token.kind === "punct" && (token.value === ")" || token.value === "]")) brackets--;
+    if (token.kind === "string" && /^\/?[\w@~.-]+(?:\/[\w@~.-]+)*\.(?:js|css)$/.test(token.value)) result.files.push(token.value);
     if (token.kind !== "name") continue;
     if (token.depth === 0 && brackets === 0 && !isDot(tokens[i - 1])) {
       const next = tokens[i + 1];

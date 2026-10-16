@@ -74,3 +74,6 @@ export type BackgroundCode = (
  * or null for a group without JS.
  */
 export type GroupCode = ((chrome: unknown, browser: unknown, fetch: unknown, XMLHttpRequest: unknown) => () => void) | string | null;
+
+/** Extension files the background may inject with scripting.executeScript({ files }), by path, as content-script factories. */
+export type InjectableCode = Record<string, (chrome: unknown, browser: unknown, fetch: unknown, XMLHttpRequest: unknown) => () => void>;

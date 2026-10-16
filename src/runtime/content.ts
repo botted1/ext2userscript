@@ -66,7 +66,8 @@ function whenRoot(fn: () => void): void {
  * them. webextension-polyfill 0.10+ checks globalThis.chrome?.runtime?.id while it loads; code that reads those globals
  * later, from a callback, sees the originals (a ceiling).
  */
-function withGlobals(chrome: object, fn: () => void): void {
+/** Runs fn with globalThis.chrome and globalThis.browser set to this extension's chrome object, for libraries that look there. */
+export function withGlobals<T>(chrome: object, fn: () => T): T {
   // Reflect, not delete or defineProperty: a manager's sandbox global can be a proxy that reports a change as refused
   // (Violentmonkey's delete does, while removing the property), and strict mode would turn that report into an error
   // after the group's code has already run.
@@ -76,7 +77,7 @@ function withGlobals(chrome: object, fn: () => void): void {
     if (!descriptor || descriptor.configurable) Reflect.defineProperty(global, name, { value: chrome, configurable: true, writable: true });
   }
   try {
-    fn();
+    return fn();
   } finally {
     for (const [name, descriptor] of saved) {
       if (descriptor && !descriptor.configurable) continue;

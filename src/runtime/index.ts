@@ -5,8 +5,8 @@
 import { createAssets } from "./assets.ts";
 import { startBackground } from "./background.ts";
 import { createLogger, readLastError, withFallback } from "./chrome.ts";
-import type { BackgroundCode, GroupCode, RuntimeConfig } from "./config.ts";
-import { runContent } from "./content.ts";
+import type { BackgroundCode, GroupCode, InjectableCode, RuntimeConfig } from "./config.ts";
+import { runContent, withGlobals } from "./content.ts";
 import { leaderOf, startElection } from "./elect.ts";
 import { createGm } from "./gm.ts";
 import { createI18n } from "./i18n.ts";
@@ -15,12 +15,13 @@ import { showMenus } from "./menus.ts";
 import { createMessaging } from "./messaging.ts";
 import { listenForCommands } from "./commands.ts";
 import { createNetwork } from "./net.ts";
+import { createInjector } from "./scripting.ts";
 import { startRegistry, type Registry, type TabInfo, type TabState } from "./registry.ts";
 import { startBus } from "./bus.ts";
 import { createStorage } from "./storage.ts";
 import { createTabs } from "./tabs.ts";
 
-export function start(config: RuntimeConfig, code: readonly GroupCode[], background: BackgroundCode | null = null): void {
+export function start(config: RuntimeConfig, code: readonly GroupCode[], background: BackgroundCode | null = null, injectables: InjectableCode = {}): void {
   const log = createLogger(config.name);
   try {
     const gm = createGm();
@@ -57,6 +58,8 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
           ? { id: config.id, url: `chrome-extension://${config.id}/${config.background?.entry ?? ""}`, origin: `chrome-extension://${config.id}` }
           : { id: config.id, url: location.href, origin: location.origin, frameId: frame ? 1 : 0, ...(tabs ? { tab: tabs.selfTab() } : {}) },
       control: async (op, args) => {
+        const injected = injector.run(op, args);
+        if (injected) return injected;
         if (!tabs) throw new Error("this tab isn't ready");
         return tabs.control(op, args);
       },
@@ -94,7 +97,10 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
       fetch: globalThis.fetch.bind(globalThis),
       XMLHttpRequest: globalThis.XMLHttpRequest,
     });
-    runContent(config, code, { gm, chrome: { runtime, storage, i18n, extension, dom }, assets, log, network });
+    const contentChrome = { runtime, storage, i18n, extension, dom };
+    // Scripts and styles the background's scripting API sends this page.
+    const injector = createInjector({ gm, chrome: contentChrome, network, injectables, withGlobals, log });
+    runContent(config, code, { gm, chrome: contentChrome, assets, log, network });
 
     void (async () => {
       const me = await tabIdentity(gm, config.ns, frame);

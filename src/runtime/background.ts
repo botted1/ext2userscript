@@ -20,6 +20,7 @@ import { createNetwork } from "./net.ts";
 import { createNotifications } from "./notifications.ts";
 import { createPermissions } from "./permissions.ts";
 import { REGISTRY_TIMING } from "./registry.ts";
+import { createScripting } from "./scripting.ts";
 import { createWindows } from "./windows.ts";
 
 export type BackgroundDeps = {
@@ -106,11 +107,15 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
       return readLastError();
     },
   }, "all");
+  const tabs = deps.tabs as { query(query: object): Promise<Array<{ id: number }>> } & Record<string, unknown>;
+  const scripting = createScripting({ messaging, assets, log, currentTab: async () => (await tabs.query({ active: true }))[0]?.id });
   const known: Record<string, object> = {
     runtime,
     storage: deps.storage,
     i18n: deps.i18n,
-    tabs: withFallback(log, "tabs", deps.tabs, "all"),
+    // MV2's tabs.executeScript, insertCSS and removeCSS sit next to the rest of chrome.tabs.
+    tabs: withFallback(log, "tabs", { ...tabs, ...scripting.tabs }, "all"),
+    scripting: withFallback(log, "scripting", scripting.scripting, "all"),
     extension,
     alarms: withFallback(log, "alarms", alarms.api, "all"),
     commands: withFallback(log, "commands", commands.api, "all"),
