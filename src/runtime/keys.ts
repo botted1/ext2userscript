@@ -19,5 +19,7 @@ export function keys(ns: string) {
     session: `x2u:${ns}:session`,
     /** The alarms' schedule (spec §5.2), which the leader's background keeps. */
     alarms: `x2u:${ns}:alarms`,
+    /** Context-menu items and the toolbar button's state, which every tab shows as menu commands. */
+    menus: `x2u:${ns}:menus`,
   };
 }

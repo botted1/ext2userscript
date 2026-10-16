@@ -11,6 +11,7 @@ import { leaderOf, startElection } from "./elect.ts";
 import { createGm } from "./gm.ts";
 import { createI18n } from "./i18n.ts";
 import { tabIdentity } from "./identity.ts";
+import { showMenus } from "./menus.ts";
 import { createMessaging } from "./messaging.ts";
 import { createNetwork } from "./net.ts";
 import { startRegistry, type Registry, type TabInfo, type TabState } from "./registry.ts";
@@ -124,6 +125,8 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
       });
 
       if (frame || !background) return;
+      // The background's context-menu items and toolbar button, as this tab's menu commands.
+      void showMenus({ gm, ns: config.ns, log, config, emit: messaging.emit });
       let handle: { pause(): void; resume(): void } | undefined;
       let starting = false;
       startElection(joined, {

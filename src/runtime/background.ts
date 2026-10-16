@@ -12,6 +12,7 @@ import { createBackgroundGlobal } from "./global.ts";
 import { keys } from "./keys.ts";
 import { checkLifecycle } from "./lifecycle.ts";
 import { createLocalStorage } from "./local-storage.ts";
+import { createMenus, type MenuClick } from "./menus.ts";
 import type { Messaging } from "./messaging.ts";
 import { createNetwork } from "./net.ts";
 import { REGISTRY_TIMING } from "./registry.ts";
@@ -50,6 +51,11 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
   const lifecycle = await checkLifecycle(gm, config.ns, String((config.manifest as { version?: unknown }).version ?? ""));
   const localStorage = await createLocalStorage(gm, config.ns, log);
   const alarms = await createAlarms(gm, config.ns, log);
+  // A persistent MV2 background page makes its menu each time it starts; an event page or service worker makes it once.
+  const persistent = !background.worker && (config.manifest as { background?: { persistent?: unknown } }).background?.persistent !== false;
+  const menus = await createMenus({ gm, ns: config.ns, log, config, persistent });
+  messaging.onEvent("menu-click", (data, sender) => menus.click(data as MenuClick, sender.tab));
+  messaging.onEvent("action-click", (_data, sender) => menus.actionClick(sender.tab));
   let active = true;
   // While it leads, the session stamp stays fresh, so a new leader in this browser session doesn't fire onStartup.
   setInterval(() => {
@@ -90,6 +96,12 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     tabs: withFallback(log, "tabs", deps.tabs, "all"),
     extension,
     alarms: withFallback(log, "alarms", alarms.api, "all"),
+    contextMenus: withFallback(log, "contextMenus", menus.contextMenus, "all"),
+    menus: withFallback(log, "menus", menus.contextMenus, "all"),
+    // MV3's action, and MV2's browserAction and pageAction: one toolbar button, shown as a menu command.
+    action: withFallback(log, "action", menus.action, "all"),
+    browserAction: withFallback(log, "browserAction", menus.action, "all"),
+    pageAction: withFallback(log, "pageAction", menus.action, "all"),
   };
   // The background has every API the manifest asks for. Ones this version doesn't implement fail with a named error when
   // used, so top-level code that sets them up (chrome.alarms.create(...)) doesn't stop the rest of the background.
