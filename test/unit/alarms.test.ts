@@ -40,6 +40,16 @@ describe("alarms", () => {
     assert.equal(await api.clear("tick"), false);
   });
 
+  it("waits for an alarm more than 24.8 days away, the longest a timer can wait, instead of firing it at once", async (t) => {
+    const hub = createHub();
+    const { api, fired } = await alarmsOn(t, hub);
+    await api.create("monthly", { periodInMinutes: 30 * 24 * 60 });
+    await api.create("later", { when: Date.now() + 60 * 24 * 60 * 60_000 });
+    await sleep(100);
+    assert.deepEqual(fired, []);
+    assert.deepEqual(((await api.getAll()) as Alarm[]).map((alarm) => alarm.name).sort(), ["later", "monthly"]);
+  });
+
   it("follows Chrome's argument rules: an optional name, and when or delayInMinutes but not both", async (t) => {
     const { api } = await alarmsOn(t, createHub());
     await api.create({ when: Date.now() + 60_000 });

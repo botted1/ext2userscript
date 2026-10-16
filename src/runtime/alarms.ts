@@ -10,6 +10,8 @@ export type Alarm = { name: string; scheduledTime: number; periodInMinutes?: num
 type AlarmInfo = { when?: number; delayInMinutes?: number; periodInMinutes?: number };
 
 const MINUTE = 60_000;
+/** The longest a timer can wait (about 24.8 days); a longer delay would fire at once. */
+const LONGEST_WAIT = 2 ** 31 - 1;
 
 export async function createAlarms(gm: Gm, ns: string, log: Logger) {
   const key = keys(ns).alarms;
@@ -27,15 +29,17 @@ export async function createAlarms(gm: Gm, ns: string, log: Logger) {
     clearTimeout(timers.get(name));
     timers.delete(name);
   };
-  // An alarm whose time passed while no page was open fires at once, as Chrome fires missed alarms on wake.
+  // An alarm whose time passed while no page was open fires at once, as Chrome fires missed alarms on wake. One further
+  // away than a timer can wait gets a timer for the longest wait, which looks again then.
   const schedule = (alarm: Alarm) => {
     stop(alarm.name);
-    if (running) timers.set(alarm.name, setTimeout(() => fire(alarm.name), Math.max(0, alarm.scheduledTime - Date.now())));
+    if (running) timers.set(alarm.name, setTimeout(() => fire(alarm.name), Math.min(LONGEST_WAIT, Math.max(0, alarm.scheduledTime - Date.now()))));
   };
   const fire = (name: string) => {
     const alarm = alarms[name];
     timers.delete(name);
     if (!alarm || !running) return;
+    if (Date.now() < alarm.scheduledTime) return schedule(alarm);
     if (alarm.periodInMinutes) schedule((alarms[name] = { ...alarm, scheduledTime: Date.now() + alarm.periodInMinutes * MINUTE }));
     else delete alarms[name];
     void save();
