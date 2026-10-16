@@ -9,6 +9,7 @@ import { bundleBackground, bundleContent, type BackgroundBundle, type ContentCod
 import { emit } from "./emit.ts";
 import type { EsbuildApi } from "./esbuild.ts";
 import { readManifest } from "./manifest.ts";
+import { dirname, joinPath } from "./paths.ts";
 import { namespaceOf, renderMetadata } from "./metadata.ts";
 import { sortEntries, verdictOf, type Report } from "./report.ts";
 import { scan } from "./scan.ts";
@@ -55,7 +56,7 @@ async function prepare(
   const background = await bundleBackground(model, files, options.esbuild);
   const backgroundScan = background.background ? scan(background.background.code) : undefined;
   const { entries, methods } = analyze(model, scans, backgroundScan ? { scan: backgroundScan, bundle: background } : undefined);
-  const getUrls = [...scans.flatMap((result) => result?.urls ?? []), ...(backgroundScan?.urls ?? [])];
+  const getUrls = [...scans.flatMap((result) => result?.urls ?? []), ...(backgroundScan?.urls ?? []), ...backgroundFiles(backgroundScan?.fetches ?? [], background.background?.entry, files)];
   const assets = collectAssets(model, files, getUrls, options.ignoreAssets);
   const id = options.extensionId ?? (model.key ? await chromeId(base64Bytes(model.key)) : undefined) ?? model.geckoId ?? (await chromeId(new TextEncoder().encode(model.name)));
   const ns = namespaceOf(model);
@@ -90,6 +91,20 @@ async function prepare(
     warnings: [...manifestWarnings, ...bundleWarnings, ...background.warnings, ...assets.warnings],
   };
   return { header: renderMetadata(model, files, ns, grantsFor(methods)), config, code, background: background.background, report };
+}
+
+/** The extension files a background fetches by relative URL, which resolve against its own file. Others are left out quietly. */
+function backgroundFiles(urls: readonly string[], entry: string | undefined, files: ExtensionFiles): string[] {
+  if (entry === undefined) return [];
+  return urls.flatMap((url) => {
+    if (/^[a-z][a-z\d+.-]*:|^\/\//i.test(url)) return [];
+    try {
+      const path = joinPath(url.startsWith("/") ? "" : dirname(entry), url.split(/[?#]/)[0]);
+      return files.has(path) ? [path] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 const base64Bytes = (base64: string) => Uint8Array.from(atob(base64.replace(/\s+/g, "")), (char) => char.charCodeAt(0));

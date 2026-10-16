@@ -1,7 +1,8 @@
 // A JavaScript scanner just deep enough for the analyzer (spec §3.4), the asset collector (§3.6) and the background
 // bundler (§3.3). It skips comments, string and template text and regular expressions, then reads from what's left:
 // member chains rooted at chrome or browser, the string-literal arguments of getURL(...), whether the code uses
-// dynamic import(), where it calls importScripts(...), and its top-level let, const and class declarations.
+// dynamic import(), where it calls importScripts(...), the string literals it passes to fetch(...), and its top-level
+// let, const and class declarations.
 // Ceilings: aliasing (const c = chrome) and computed access (chrome["tabs"]) are missed, and a regular expression
 // right after `)` or `}` is read as a division.
 
@@ -10,6 +11,8 @@ export type ScanResult = {
   chains: string[];
   /** String literals passed to runtime.getURL or extension.getURL, as written. */
   urls: string[];
+  /** String literals passed to fetch(...) (or self.fetch and the like), as written: a background's relative URLs are extension files. */
+  fetches: string[];
   dynamicImport: boolean;
   /**
    * importScripts(...) calls: where each is in the code, its URLs when every argument is a string literal, and whether
@@ -31,7 +34,7 @@ const GLOBAL_OWNERS = new Set(["window", "globalThis", "self"]);
 
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
-  const result: ScanResult = { chains: [], urls: [], dynamicImport: false, importScripts: [], lexical: [] };
+  const result: ScanResult = { chains: [], urls: [], fetches: [], dynamicImport: false, importScripts: [], lexical: [] };
   const isDot = (token: Token | undefined) => token?.kind === "punct" && (token.value === "." || token.value === "?.");
   let brackets = 0; // open ( and [
   for (let i = 0; i < tokens.length; i++) {
@@ -52,6 +55,10 @@ export function scan(code: string): ScanResult {
     if (token.value === "getURL" && isDot(tokens[i - 1]) && tokens[i + 1]?.value === "(" && tokens[i + 2]?.kind === "string") {
       const after = tokens[i + 3]?.value;
       if (after === ")" || after === ",") result.urls.push(tokens[i + 2].value);
+    }
+    if (token.value === "fetch" && tokens[i + 1]?.value === "(" && tokens[i + 2]?.kind === "string" && (tokens[i + 3]?.value === ")" || tokens[i + 3]?.value === ",")) {
+      const owner = isDot(tokens[i - 1]) ? tokens[i - 2] : undefined;
+      if (!owner || (owner.kind === "name" && GLOBAL_OWNERS.has(owner.value))) result.fetches.push(tokens[i + 2].value);
     }
     if (token.value === "importScripts" && tokens[i + 1]?.value === "(") {
       const owner = isDot(tokens[i - 1]) ? tokens[i - 2] : undefined;

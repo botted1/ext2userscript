@@ -12,6 +12,7 @@ import { keys } from "./keys.ts";
 import { checkLifecycle } from "./lifecycle.ts";
 import { createLocalStorage } from "./local-storage.ts";
 import type { Messaging } from "./messaging.ts";
+import { createNetwork } from "./net.ts";
 import { REGISTRY_TIMING } from "./registry.ts";
 
 export type BackgroundDeps = {
@@ -101,7 +102,20 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
   const importScripts = () => {
     throw new Error("ext2userscript: importScripts works only with string literals, which are inlined when the extension is converted");
   };
-  const { global, fire } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage });
+  const self = `chrome-extension://${config.id}/${background.entry}`;
+  // A service worker has fetch but no XMLHttpRequest, as in Chrome; a background page has both.
+  const network = createNetwork({
+    gm,
+    assetUrl: getURL,
+    extensionId: config.id,
+    base: () => self,
+    origin: location.origin,
+    hosts: [...(config.permissions?.origins ?? []), ...(config.permissions?.optionalOrigins ?? [])],
+    fetch: globalThis.fetch.bind(globalThis),
+    XMLHttpRequest: globalThis.XMLHttpRequest,
+  });
+  const XMLHttpRequest = background.worker ? undefined : network.XMLHttpRequest;
+  const { global, fire } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage, fetch: network.fetch, XMLHttpRequest });
   try {
     deps.code(
       chrome,
@@ -113,7 +127,9 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
       background.worker ? undefined : document,
       importScripts,
       localStorage,
-      { url: `chrome-extension://${config.id}/${background.entry}` },
+      network.fetch,
+      XMLHttpRequest,
+      { url: self },
     )();
   } catch (error) {
     createLogger(`${config.name} background`).error(error);

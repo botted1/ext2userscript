@@ -12,6 +12,7 @@ import { createGm } from "./gm.ts";
 import { createI18n } from "./i18n.ts";
 import { tabIdentity } from "./identity.ts";
 import { createMessaging } from "./messaging.ts";
+import { createNetwork } from "./net.ts";
 import { startRegistry, type Registry, type TabInfo, type TabState } from "./registry.ts";
 import { startBus } from "./bus.ts";
 import { createStorage } from "./storage.ts";
@@ -79,7 +80,17 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
     }, ["sendRequest", "onRequest"]);
     const dom = withFallback(log, "dom", {}, ["openOrClosedShadowRoot"]);
     // The namespaces Chrome gives content scripts. chrome.tabs and the rest are undefined there, as in Chrome.
-    runContent(config, code, { gm, chrome: { runtime, storage, i18n, extension, dom }, assets, log });
+    const network = createNetwork({
+      gm,
+      assetUrl: getURL,
+      extensionId: config.id,
+      base: () => location.href,
+      origin: location.origin,
+      hosts: [...(config.permissions?.origins ?? []), ...(config.permissions?.optionalOrigins ?? [])],
+      fetch: globalThis.fetch.bind(globalThis),
+      XMLHttpRequest: globalThis.XMLHttpRequest,
+    });
+    runContent(config, code, { gm, chrome: { runtime, storage, i18n, extension, dom }, assets, log, network });
 
     void (async () => {
       const me = await tabIdentity(gm, config.ns, frame);

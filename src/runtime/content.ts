@@ -8,8 +8,9 @@ import type { Logger } from "./chrome.ts";
 import type { GroupCode, RunAt, RuntimeConfig } from "./config.ts";
 import type { Gm } from "./gm.ts";
 import { filterMatches } from "./match.ts";
+import type { Network } from "./net.ts";
 
-type Deps = { gm: Gm; chrome: object; assets: Assets; log: Logger };
+type Deps = { gm: Gm; chrome: object; assets: Assets; log: Logger; network: Network };
 
 export function runContent(config: RuntimeConfig, code: readonly GroupCode[], deps: Deps): void {
   const inFrame = window.top !== window;
@@ -31,7 +32,7 @@ export function runContent(config: RuntimeConfig, code: readonly GroupCode[], de
     const run = () => {
       try {
         if (typeof c === "string") deps.gm.addElement(root(), "script", { textContent: c }).catch((error: unknown) => deps.log.error(error));
-        else withGlobals(deps.chrome, c(deps.chrome, deps.chrome));
+        else withGlobals(deps.chrome, c(deps.chrome, deps.chrome, deps.network.fetch, deps.network.XMLHttpRequest));
       } catch (error) {
         deps.log.error(`content_scripts[${index}] failed:`, error);
       }

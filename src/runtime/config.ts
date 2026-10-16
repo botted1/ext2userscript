@@ -63,11 +63,14 @@ export type BackgroundCode = (
   document: unknown,
   importScripts: unknown,
   localStorage: unknown,
+  fetch: unknown,
+  XMLHttpRequest: unknown,
   __x2uImportMeta: { url: string },
 ) => () => void;
 
 /**
  * One entry per content group, in manifest order: isolated-world code as a factory that takes the chrome and browser
- * objects and returns the code to run, MAIN-world code as source text, or null for a group without JS.
+ * objects and the network shim's fetch and XMLHttpRequest and returns the code to run, MAIN-world code as source text,
+ * or null for a group without JS.
  */
-export type GroupCode = ((chrome: unknown, browser: unknown) => () => void) | string | null;
+export type GroupCode = ((chrome: unknown, browser: unknown, fetch: unknown, XMLHttpRequest: unknown) => () => void) | string | null;

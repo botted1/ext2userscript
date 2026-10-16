@@ -13,7 +13,7 @@ describe("emit and convert: the background", () => {
     new Function("__got", userscript)((b: BackgroundCode) => (factory = b));
     // Inside the factory, globalThis is the parameter: the background's global object.
     const backgroundGlobal: { __seen?: unknown[] } = {};
-    factory?.({}, {}, { tag: "shim" }, backgroundGlobal, undefined, undefined, () => {}, {}, { url: "u" })();
+    factory?.({}, {}, { tag: "shim" }, backgroundGlobal, undefined, undefined, () => {}, {}, () => {}, undefined, { url: "u" })();
     assert.deepEqual(backgroundGlobal.__seen, ["undefined", "shim", "u"]);
   });
 
@@ -21,6 +21,6 @@ describe("emit and convert: the background", () => {
     const { userscript } = await convert(backgroundExtension("http://127.0.0.1:4567"), { runtime: "var __x2uRuntime = { start() {} };" });
     const config = JSON.parse(/__x2uRuntime\.start\((\{.*?\}), \[\n/s.exec(userscript)?.[1] ?? "{}");
     assert.deepEqual(config.background, { worker: true, entry: "sw.js" });
-    assert.match(userscript, /function \(chrome, browser, self, globalThis, window, document, importScripts, localStorage, __x2uImportMeta\) \{\nreturn function \(\) \{\nimportScripts|\/\* importScripts\("lib\/helper\.js"\) \*\//);
+    assert.match(userscript, /function \(chrome, browser, self, globalThis, window, document, importScripts, localStorage, fetch, XMLHttpRequest, __x2uImportMeta\) \{\nreturn function \(\) \{\nimportScripts|\/\* importScripts\("lib\/helper\.js"\) \*\//);
   });
 });

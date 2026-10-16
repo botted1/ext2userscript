@@ -9,13 +9,19 @@ import { convert } from "../../src/convert/index.ts";
 import { loadRuntime } from "../../src/convert/runtime-node.ts";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
 import { readAttr, waitForAttr } from "../support/dom.ts";
-import { backgroundExtension, moduleBackgroundExtension, sampleExtension } from "../support/extension.ts";
+import { backgroundExtension, moduleBackgroundExtension, networkExtension, sampleExtension } from "../support/extension.ts";
 import { startServer, type Server } from "../support/server.ts";
 import { sleep } from "../support/time.ts";
 
 const html = (body: string, head = "") => () =>
   new Response(`<!doctype html><html><head><title>x2u</title>${head}</head><body>${body}</body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
 const page = html('<div class="x2u-box">box</div>', "<script>window.pageValue = 42;</script>");
+/** A page whose CSP lets it connect only to its own origin, as GitHub's does to its own hosts. */
+const connectStrictPage = async () => {
+  const response = page();
+  response.headers.set("content-security-policy", "connect-src 'self'");
+  return response;
+};
 
 /** Polls an attribute on any element (a frame's <html>, say) until it satisfies ok, for up to 10 s. */
 async function attrUntil(element: Locator, name: string, ok: (value: string | null) => boolean): Promise<string | null> {
@@ -38,6 +44,9 @@ function harness(backend: (typeof backends)[number], extension: (origin: string)
       "/glob-yes.html": page,
       "/framed.html": html('<iframe src="/child.html"></iframe>'),
       "/child.html": html("child"),
+      "/connect-strict.html": connectStrictPage,
+      "/api.json": () => Response.json({ from: "api" }),
+      "/same.json": () => Response.json({ from: "same" }),
     });
     const { userscript } = await convert(extension(state.site.origin), { runtime: await loadRuntime(), esbuild: await loadEsbuild() });
     state.session = await startSession(backend, userscript);
@@ -143,6 +152,26 @@ for (const backend of backends) {
 
     it("bundles the service worker's imports and gives it import.meta.url", async () => {
       await waitForAttr(await open("/page.html"), "data-module", "module:/bg/icon.png");
+    });
+  });
+
+  describe(`network on ${backend}`, () => {
+    const { open } = harness(backend, networkExtension);
+
+    it("fetches from another origin the host permissions cover, in the background and content scripts, and its own files", async () => {
+      const tab = await open("/page.html");
+      // A service worker has no XMLHttpRequest, as in Chrome.
+      await waitForAttr(tab, "data-background", "api|config|undefined");
+      await waitForAttr(tab, "data-fetch", "api");
+      await waitForAttr(tab, "data-xhr", "api:200");
+      await waitForAttr(tab, "data-same", "same");
+    });
+
+    it("reaches a permitted host from a page whose CSP allows connections only to itself", async () => {
+      const tab = await open("/connect-strict.html");
+      await waitForAttr(tab, "data-fetch", "api");
+      await waitForAttr(tab, "data-xhr", "api:200");
+      await waitForAttr(tab, "data-same", "same");
     });
   });
 }

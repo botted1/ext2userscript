@@ -3,6 +3,7 @@
 // - backgroundExtension has a classic service worker that answers content scripts: messages, a port, tabs.sendMessage,
 //   onInstalled, importScripts.
 // - moduleBackgroundExtension has an ES-module service worker.
+// - networkExtension fetches from another origin, which sends no CORS headers, in the background and content scripts.
 // - plainExtension is the smallest one that converts with no unsupported or partial entries.
 import { strToU8, zipSync } from "fflate";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
@@ -139,6 +140,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });`,
     "bg/label.js": 'export const label = (path) => "module:" + path;',
     "content.js": 'chrome.runtime.sendMessage("which").then((reply) => { document.documentElement.dataset.module = reply; });',
+  });
+}
+
+/**
+ * origin is where the test pages are served (http://127.0.0.1:<port>); the same server as http://localhost:<port> is
+ * another origin, which the host permissions cover and whose /api.json sends no CORS headers.
+ */
+export function networkExtension(origin: string): ExtensionFiles {
+  const other = origin.replace("127.0.0.1", "localhost");
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "Network Sample",
+      version: "1.0.0",
+      background: { service_worker: "sw.js" },
+      host_permissions: [`${other}/*`],
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"] }],
+    }),
+    "sw.js": `chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  Promise.all([fetch("${other}/api.json").then((r) => r.json()), fetch("data/config.json").then((r) => r.json())]).then(
+    ([api, config]) => sendResponse(api.from + "|" + config.kind + "|" + typeof XMLHttpRequest),
+    (error) => sendResponse("failed: " + error.message),
+  );
+  return true;
+});`,
+    "data/config.json": '{"kind":"config"}',
+    "content.js": `const html = document.documentElement;
+chrome.runtime.sendMessage("net").then((reply) => { html.dataset.background = reply; });
+fetch("${other}/api.json").then((r) => r.json()).then((body) => { html.dataset.fetch = body.from; }, (error) => { html.dataset.fetch = "failed: " + error.message; });
+const xhr = new XMLHttpRequest();
+xhr.open("GET", "${other}/api.json");
+xhr.responseType = "json";
+xhr.onload = () => { html.dataset.xhr = xhr.response.from + ":" + xhr.status; };
+xhr.onerror = () => { html.dataset.xhr = "failed"; };
+xhr.send();
+fetch("/same.json").then((r) => r.json()).then((body) => { html.dataset.same = body.from; });
+`,
   });
 }
 

@@ -18,7 +18,7 @@ describe("convert", () => {
     assert.doesNotMatch(header, /@noframes/); // one group has all_frames
     assert.doesNotMatch(header, /@exclude-match/); // only one group excludes it
     assert.match(userscript, /__x2uRuntime\.start\(/);
-    assert.match(userscript, /function \(chrome, browser\) \{\nreturn function \(\) \{\nif \(!globalThis\.chrome/);
+    assert.match(userscript, /function \(chrome, browser, fetch, XMLHttpRequest\) \{\nreturn function \(\) \{\nif \(!globalThis\.chrome/);
     assert.match(userscript, /"document\.documentElement\.dataset\.main = String\(window\.pageValue\);"/); // the MAIN group, as text
     assert.doesNotThrow(() => new Function(userscript), "the userscript parses");
   });
