@@ -16,11 +16,13 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
   const urls = new Map<string, string>();
   const paths = new Map<string, string>();
 
+  const missing = (path: string) => log.once(`asset:${path}`, `${path} isn't in the userscript (missing from the extension, or excluded with --ignore-assets)`);
+
   const url = (input: string): string => {
     const path = toPath(String(input));
     const entry = table[path];
     if (!entry) {
-      log.once(`asset:${path}`, `${path} isn't in the userscript (missing from the extension, or excluded with --ignore-assets)`);
+      missing(path);
       return `chrome-extension://${id}/${path}`;
     }
     let blobUrl = urls.get(path);
@@ -37,6 +39,13 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
     /** The asset path behind a blob URL this table handed out. */
     pathOf: (blobUrl: string) => paths.get(blobUrl),
     text: (path: string) => (table[path] ? new TextDecoder().decode(decode(table[path][1])) : undefined),
+    /** A file's type and bytes, for the network shim to answer a request for it in this page. */
+    file: (input: string) => {
+      const path = toPath(String(input));
+      const entry = table[path];
+      if (!entry) return void missing(path);
+      return { type: entry[0], bytes: decode(entry[1]) };
+    },
     /** The file as a data: URL, for a consumer outside the page that can't load its blob: URLs (a manager's notification). */
     dataUrl: (path: string) => {
       const entry = table[toPath(path)];

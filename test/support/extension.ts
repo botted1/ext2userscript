@@ -178,6 +178,7 @@ xhr.onload = () => { html.dataset.xhr = xhr.response.from + ":" + xhr.status; };
 xhr.onerror = () => { html.dataset.xhr = "failed"; };
 xhr.send();
 fetch("/same.json").then((r) => r.json()).then((body) => { html.dataset.same = body.from; });
+fetch("relative.json").then((r) => r.json()).then((body) => { html.dataset.relative = body.from; });
 `,
   });
 }

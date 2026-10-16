@@ -54,6 +54,9 @@ function harness(backend: (typeof backends)[number], extension: (origin: string)
       "/connect-strict.html": connectStrictPage,
       "/api.json": () => Response.json({ from: "api" }),
       "/same.json": () => Response.json({ from: "same" }),
+      "/based.html": html("based", '<base href="/base/">'),
+      "/relative.json": () => Response.json({ from: "root" }),
+      "/base/relative.json": () => Response.json({ from: "base" }),
     });
     const { userscript } = await convert(extension(state.site.origin), { runtime: await loadRuntime(), esbuild: await loadEsbuild() });
     state.session = await startSession(backend, userscript);
@@ -163,7 +166,7 @@ for (const backend of backends) {
   });
 
   describe(`network on ${backend}`, () => {
-    const { open } = harness(backend, networkExtension);
+    const { open, session } = harness(backend, networkExtension);
 
     it("fetches from another origin the host permissions cover, in the background and content scripts, and its own files", async () => {
       const tab = await open("/page.html");
@@ -179,6 +182,16 @@ for (const backend of backends) {
       await waitForAttr(tab, "data-fetch", "api");
       await waitForAttr(tab, "data-xhr", "api:200");
       await waitForAttr(tab, "data-same", "same");
+    });
+
+    it("loads the background's own files when its tab's CSP allows connections only to itself", async () => {
+      // Every earlier tab closes, so the background runs on this one.
+      for (const tab of session().context.pages()) await tab.close({ runBeforeUnload: true });
+      await waitForAttr(await open("/connect-strict.html"), "data-background", "api|config|undefined");
+    });
+
+    it("resolves a content script's relative URL against the page's <base href>, as the page's own requests do", async () => {
+      await waitForAttr(await open("/based.html"), "data-relative", "base");
     });
   });
 

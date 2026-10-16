@@ -6,6 +6,13 @@ import { createNetwork, type NetworkDeps } from "../../src/runtime/net.ts";
 
 type Reply = Partial<GmXhrResponse> | Error;
 
+/** The extension's files, as the asset table has them: path → [type, text]. */
+const FILES: Record<string, [string, string]> = {
+  "data/info file.json": ["application/json", '{"kind":"info"}'],
+  "bg/config.json": ["application/json", '{"kind":"config"}'],
+  "icon.png": ["image/png", "PNG"],
+};
+
 /** A network over a fake gm.xmlHttpRequest that answers with `reply`, and a page fetch that records what it got. */
 function network(reply: Reply = {}, overrides: Partial<NetworkDeps> = {}) {
   const gmCalls: XhrRequest[] = [];
@@ -18,11 +25,13 @@ function network(reply: Reply = {}, overrides: Partial<NetworkDeps> = {}) {
         return { status: 200, statusText: "OK", finalUrl: request.url, responseHeaders: "", response: new ArrayBuffer(0), ...reply };
       },
     },
-    assetUrl: (path) => `blob:https://page.test/${path}`,
+    asset: (path) => (FILES[path] ? { type: FILES[path][0], bytes: new TextEncoder().encode(FILES[path][1]) } : undefined),
+    assetPathOf: (url) => (url.startsWith("blob:https://page.test/x2u-") ? url.slice("blob:https://page.test/x2u-".length) : undefined),
     extensionId: "abcdefghijklmnopabcdefghijklmnop",
     base: () => "https://page.test/app/index.html",
     origin: "https://page.test",
     hosts: ["https://api.test/v1/*", "*://*.cdn.test/*", "not a pattern"],
+    cookies: "unless-omitted",
     fetch: async (input) => {
       pageCalls.push(String(input instanceof Request ? input.url : input));
       return new Response("from the page");
@@ -61,21 +70,50 @@ describe("fetch", () => {
     assert.deepEqual(gmCalls.map((call) => [call.url, call.anonymous]), [["https://api.test/other/path", false], ["https://img.cdn.test/a.png", true]]);
   });
 
-  it("leaves same-origin and unpermitted requests to the page, and serves extension URLs from the asset table", async () => {
+  it("leaves same-origin and unpermitted requests to the page", async () => {
     const { net, gmCalls, pageCalls } = network();
     await net.fetch("/same/origin");
     await net.fetch("https://elsewhere.test/x");
-    const asset = await net.fetch("chrome-extension://abcdefghijklmnopabcdefghijklmnop/data/info%20file.json");
-    assert.equal(asset.url, "chrome-extension://abcdefghijklmnopabcdefghijklmnop/data/info%20file.json");
-    assert.deepEqual(pageCalls, ["https://page.test/same/origin", "https://elsewhere.test/x", "blob:https://page.test/data/info file.json"]);
+    assert.deepEqual(pageCalls, ["https://page.test/same/origin", "https://elsewhere.test/x"]);
     assert.equal(gmCalls.length, 0);
   });
 
+  it("answers extension URLs, and the blob: URLs getURL gave out, from the asset table without a request the page's CSP could refuse", async () => {
+    const { net, gmCalls, pageCalls } = network();
+    const asset = await net.fetch("chrome-extension://abcdefghijklmnopabcdefghijklmnop/data/info%20file.json");
+    assert.deepEqual([asset.url, asset.status, asset.headers.get("content-type"), await asset.json()], ["chrome-extension://abcdefghijklmnopabcdefghijklmnop/data/info%20file.json", 200, "application/json", { kind: "info" }]);
+    assert.equal(await (await net.fetch("blob:https://page.test/x2u-icon.png")).text(), "PNG");
+    await assert.rejects(net.fetch("chrome-extension://abcdefghijklmnopabcdefghijklmnop/missing.json"), /Failed to fetch/);
+    assert.deepEqual([pageCalls, gmCalls], [[], []]);
+  });
+
   it("resolves a background's relative URLs against its own file, so they reach the extension's files", async () => {
-    const { net, pageCalls } = network({}, { base: () => "chrome-extension://abcdefghijklmnopabcdefghijklmnop/bg/sw.js" });
-    await net.fetch("config.json");
-    await net.fetch(new URL("../icon.png", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/bg/sw.js"));
-    assert.deepEqual(pageCalls, ["blob:https://page.test/bg/config.json", "blob:https://page.test/icon.png"]);
+    const { net } = network({}, { base: () => "chrome-extension://abcdefghijklmnopabcdefghijklmnop/bg/sw.js" });
+    assert.deepEqual(await (await net.fetch("config.json")).json(), { kind: "config" });
+    assert.equal(await (await net.fetch(new URL("../icon.png", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/bg/sw.js"))).text(), "PNG");
+  });
+
+  it("recognises extension URLs when the id is a Firefox add-on's email-style id", async () => {
+    const { net } = network({}, { extensionId: "addon@example.com", base: () => "chrome-extension://addon@example.com/bg/sw.js" });
+    assert.deepEqual(await (await net.fetch("config.json")).json(), { kind: "config" });
+  });
+
+  it("sends cookies from a content script only when the request asks for them, as the page's own requests do", async () => {
+    const { net, gmCalls } = network({}, { cookies: "when-included" });
+    await net.fetch("https://api.test/v1/a");
+    await net.fetch("https://api.test/v1/b", { credentials: "include" });
+    const xhr = new net.XMLHttpRequest();
+    const done = new Promise((resolve) => (xhr.onloadend = resolve));
+    xhr.open("GET", "https://api.test/v1/c");
+    xhr.send();
+    await done;
+    const withCookies = new net.XMLHttpRequest();
+    const ended = new Promise((resolve) => (withCookies.onloadend = resolve));
+    withCookies.open("GET", "https://api.test/v1/d");
+    withCookies.withCredentials = true;
+    withCookies.send();
+    await ended;
+    assert.deepEqual(gmCalls.map((call) => call.anonymous), [true, false, true, false]);
   });
 
   it("gives a body-less status no body, and fails like fetch: TypeError for a network error, AbortError when aborted", async () => {
@@ -140,26 +178,54 @@ describe("XMLHttpRequest", () => {
     assert.deepEqual([order, aborted.readyState, (gmCalls[0].signal as AbortSignal).aborted], [["abort", "loadend"], 0, true]);
   });
 
-  it("hands any other request to the page's own XMLHttpRequest, with extension URLs pointing at the asset table", () => {
+  it("hands any other request to the page's own XMLHttpRequest, setting only what was changed, so a synchronous one works", () => {
     const opened: unknown[][] = [];
+    /** Like a page's XMLHttpRequest: a synchronous request refuses a response type or a timeout, even the default ones. */
     class PageXhr extends EventTarget {
       upload = new EventTarget();
       readyState = 4;
       status = 200;
       responseText = "native";
-      responseType = "";
-      timeout = 0;
       withCredentials = false;
+      #sync = false;
+      #type = "";
+      get responseType() { return this.#type; }
+      set responseType(value: string) {
+        if (this.#sync) throw new DOMException("The response type cannot be changed for synchronous requests made from a document.", "InvalidAccessError");
+        this.#type = value;
+      }
+      set timeout(_value: number) {
+        if (this.#sync) throw new DOMException("Timeouts cannot be set for synchronous requests made from a document.", "InvalidAccessError");
+      }
       open(...args: unknown[]) {
         opened.push(args);
+        this.#sync = args[2] === false;
       }
       send() {}
     }
     const { net } = network({}, { XMLHttpRequest: PageXhr as unknown as typeof XMLHttpRequest });
     const xhr = new net.XMLHttpRequest();
-    xhr.open("GET", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/data.json", false);
+    xhr.open("GET", "/settings.json", false);
     xhr.send();
-    assert.deepEqual([opened[0].slice(0, 3), xhr.status, xhr.responseText], [["GET", "blob:https://page.test/data.json", false], 200, "native"]);
+    assert.deepEqual([opened[0].slice(0, 3), xhr.status, xhr.responseText], [["GET", "https://page.test/settings.json", false], 200, "native"]);
+    const typed = new net.XMLHttpRequest();
+    typed.responseType = "json";
+    typed.open("GET", "/a.json");
+    assert.equal(typed.responseType, "json");
     assert.throws(() => xhr.open("GET", "https://api.test/v1/x", false), /synchronous request can't go through GM_xmlhttpRequest/);
+  });
+
+  it("answers an extension file from the asset table, synchronously when asked", () => {
+    const { net } = network();
+    const xhr = new net.XMLHttpRequest();
+    const seen: string[] = [];
+    xhr.onload = () => seen.push("load");
+    xhr.open("GET", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/data/info%20file.json", false);
+    xhr.send();
+    assert.deepEqual([xhr.readyState, xhr.status, xhr.responseText, xhr.getResponseHeader("content-type"), seen], [4, 200, '{"kind":"info"}', "application/json", ["load"]]);
+    const missing = new net.XMLHttpRequest();
+    missing.open("GET", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/missing.json", false);
+    missing.send();
+    assert.deepEqual([missing.readyState, missing.status], [4, 0]);
   });
 });

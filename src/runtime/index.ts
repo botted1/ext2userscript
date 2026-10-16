@@ -89,9 +89,12 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
     // The namespaces Chrome gives content scripts. chrome.tabs and the rest are undefined there, as in Chrome.
     const network = createNetwork({
       gm,
-      assetUrl: getURL,
+      asset: assets.file,
+      assetPathOf: assets.pathOf,
       extensionId: config.id,
-      base: () => location.href,
+      // Relative URLs resolve as the page's own requests do, against its <base href> when it has one.
+      base: () => document.baseURI,
+      cookies: "when-included",
       origin: location.origin,
       hosts: [...(config.permissions?.origins ?? []), ...(config.permissions?.optionalOrigins ?? [])],
       fetch: globalThis.fetch.bind(globalThis),

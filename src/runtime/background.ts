@@ -148,9 +148,11 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
   // A service worker has fetch but no XMLHttpRequest, as in Chrome; a background page has both.
   const network = createNetwork({
     gm,
-    assetUrl: getURL,
+    asset: assets.file,
+    assetPathOf: assets.pathOf,
     extensionId: config.id,
     base: () => self,
+    cookies: "unless-omitted",
     origin: location.origin,
     hosts: [...(config.permissions?.origins ?? []), ...(config.permissions?.optionalOrigins ?? [])],
     fetch: globalThis.fetch.bind(globalThis),
