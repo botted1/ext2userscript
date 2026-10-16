@@ -62,6 +62,8 @@ describe("analyze: the background", () => {
       ["chrome.scripting.executeScript", "partial"],
     ]);
     assert.deepEqual([...methods].sort(), ["cookie", "notification", "registerMenuCommand", "unregisterMenuCommand"]);
+    // Where a function falls back to the page's world, the page can read what it was given: the report says so.
+    assert.match(entries.find((entry) => entry.subject === "chrome.scripting.executeScript")?.reason ?? "", /the page can see its arguments and result/);
   });
 
   it("flags dynamic importScripts, remote imports, a background page and persistent: true", () => {

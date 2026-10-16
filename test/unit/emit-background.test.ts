@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { emit } from "../../src/convert/emit.ts";
 import { convert } from "../../src/convert/index.ts";
 import type { BackgroundCode, RuntimeConfig } from "../../src/runtime/config.ts";
-import { backgroundExtension } from "../support/extension.ts";
+import { backgroundExtension, files } from "../support/extension.ts";
 
 describe("emit and convert: the background", () => {
   it("passes the background as a factory whose parameters shadow the background's globals", () => {
@@ -15,6 +15,18 @@ describe("emit and convert: the background", () => {
     const backgroundGlobal: { __seen?: unknown[] } = {};
     factory?.({}, {}, { tag: "shim" }, backgroundGlobal, undefined, undefined, () => {}, {}, () => {}, undefined, { url: "u" })();
     assert.deepEqual(backgroundGlobal.__seen, ["undefined", "shim", "u"]);
+  });
+
+  it("bundles the scripts the background names for executeScript, whether written with ./ or not", async () => {
+    const extension = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "E", version: "1", background: { service_worker: "sw.js" } }),
+      "sw.js": 'chrome.scripting.executeScript({ target: { tabId: 1 }, files: ["./js/a.js", "b.js"] });',
+      "js/a.js": "window.a = 1;",
+      "b.js": "window.b = 2;",
+    });
+    const { userscript } = await convert(extension, { runtime: "var __x2uRuntime = { start() {} };" });
+    assert.match(userscript, /"js\/a\.js": function \(chrome, browser, fetch, XMLHttpRequest\)/);
+    assert.match(userscript, /"b\.js": function \(chrome, browser, fetch, XMLHttpRequest\)/);
   });
 
   it("puts the background's kind and entry in the config", async () => {

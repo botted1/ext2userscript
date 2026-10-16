@@ -58,7 +58,8 @@ async function prepare(
   const backgroundScan = background.background ? scan(background.background.code) : undefined;
   const { entries, methods } = analyze(model, scans, backgroundScan ? { scan: backgroundScan, bundle: background } : undefined);
   // Files the background names that it may inject: scripts are bundled like content scripts, style sheets go in the asset table.
-  const injectable = [...new Set((backgroundScan?.files ?? []).map((path) => path.replace(/^\/+/, "")))].filter((path) => files.has(path));
+  // "./js/a.js" and "/js/a.js" name the same file as "js/a.js", as in Chrome.
+  const injectable = [...new Set((backgroundScan?.files ?? []).map((path) => path.split("/").filter((part) => part !== "" && part !== ".").join("/")))].filter((path) => files.has(path));
   const injectables = Object.fromEntries(injectable.filter((path) => path.endsWith(".js")).map((path) => [path, decodeText(files.get(path) as Uint8Array)]));
   const getUrls = [
     ...scans.flatMap((result) => result?.urls ?? []),

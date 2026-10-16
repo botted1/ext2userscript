@@ -6,7 +6,7 @@ import { createLogger } from "../../src/runtime/chrome.ts";
 import { createGm } from "../../src/runtime/gm.ts";
 import type { Messaging } from "../../src/runtime/messaging.ts";
 import type { Network } from "../../src/runtime/net.ts";
-import { createInjector, createScripting } from "../../src/runtime/scripting.ts";
+import { createInjector, createScripting, isEvalBlocked } from "../../src/runtime/scripting.ts";
 
 type Api = Record<string, (...args: unknown[]) => Promise<unknown>>;
 const log = createLogger("test");
@@ -45,6 +45,15 @@ describe("createScripting", () => {
   });
 });
 
+describe("isEvalBlocked", () => {
+  it("knows Chrome's and Firefox's CSP refusals, and an EvalError from another realm, but not other errors", () => {
+    assert.equal(isEvalBlocked(new EvalError("Evaluating a string as JavaScript violates the following Content Security Policy directive")), true);
+    assert.equal(isEvalBlocked(new Error("call to Function() blocked by CSP")), true);
+    assert.equal(isEvalBlocked({ name: "EvalError", message: "x" }), true);
+    assert.equal(isEvalBlocked(new TypeError("x is not a function")), false);
+  });
+});
+
 describe("createInjector", () => {
   const chrome = { runtime: { id: "ext" } };
   const network = { fetch: async () => new Response(""), XMLHttpRequest: class {} } as unknown as Network;
@@ -56,6 +65,14 @@ describe("createInjector", () => {
     assert.equal(await run, null);
     assert.deepEqual(seen, [chrome, chrome]);
     await assert.rejects(injector().run("execute", { files: ["missing.js"], world: "ISOLATED" }) as Promise<unknown>, /Could not load file: 'missing\.js'/);
+  });
+
+  it("finds a file named with ./ or a leading slash, as Chrome does", async () => {
+    const seen: string[] = [];
+    const run = injector({ "js/inject.js": () => () => void seen.push("ran") });
+    await run.run("execute", { files: ["./js/inject.js"], world: "ISOLATED" });
+    await run.run("execute", { files: ["/js/./inject.js"], world: "ISOLATED" });
+    assert.deepEqual(seen, ["ran", "ran"]);
   });
 
   it("runs a function's source with its arguments and chrome, waiting for a promise", async () => {

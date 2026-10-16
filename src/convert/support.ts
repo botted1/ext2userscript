@@ -110,7 +110,7 @@ export const BACKGROUND_APIS: Readonly<Record<string, Support>> = {
   "tabs.onUpdated": { status: "supported" },
   "tabs.onActivated": { status: "supported" },
   "tabs.TAB_ID_NONE": { status: "supported" },
-  ...rows("tabs", ["executeScript"], { status: "partial", reason: `${TOP_FRAME}; code runs in the page's world, with a null result, where the page's CSP forbids eval` }),
+  ...rows("tabs", ["executeScript"], { status: "partial", reason: `${TOP_FRAME}; where the page's CSP forbids eval, code runs in the page's world, where the page can see it, with a null result` }),
   ...rows("tabs", ["insertCSS", "removeCSS"], { status: "partial", reason: TOP_FRAME }),
   "runtime.getBackgroundPage": { status: "supported" },
   "extension.getBackgroundPage": { status: "supported" },
@@ -136,7 +136,7 @@ export const BACKGROUND_APIS: Readonly<Record<string, Support>> = {
   ...rows("windows", ["WINDOW_ID_NONE", "WINDOW_ID_CURRENT", "CreateType", "WindowType", "WindowState"], { status: "supported" }),
   "windows.remove": { status: "partial", reason: "a userscript can't close the browser window" },
   ...rows("windows", ["onCreated", "onRemoved", "onFocusChanged", "onBoundsChanged"], { status: "partial", reason: "never fires: there is one window" }),
-  "scripting.executeScript": { status: "partial", reason: `${TOP_FRAME}; a function runs in the page's world, without chrome.*, where the page's CSP forbids eval` },
+  "scripting.executeScript": { status: "partial", reason: `${TOP_FRAME}; where the page's CSP forbids eval, a function runs in the page's world, without chrome.*, and the page can see its arguments and result` },
   ...rows("scripting", ["insertCSS", "removeCSS"], { status: "partial", reason: TOP_FRAME }),
   ...rows("scripting", ["ExecutionWorld", "StyleOrigin"], { status: "supported" }),
 };

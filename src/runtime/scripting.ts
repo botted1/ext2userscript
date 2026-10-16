@@ -4,7 +4,7 @@
 // - func (and MV2's code): its source runs through new Function (or eval), with this tab's chrome object. That is the
 //   one place the runtime evaluates extension code, as a function's source is all there is to send. Where the page's
 //   CSP forbids eval (Tampermonkey's sandbox follows it), the function runs in the page's world instead, through
-//   gm.addElement, without chrome.*.
+//   gm.addElement, without chrome.*, and the page can see its arguments and result.
 // - CSS goes in as a <style> through gm.addElement, and removeCSS takes out the same text.
 // Ceilings: only the tab's top frame; a file's result is null (its completion value can't be read without eval); MV2
 // code that can't be evaluated runs in the page's world with a null result.
@@ -19,6 +19,15 @@ type Target = { tabId: number; frameIds?: number[]; allFrames?: boolean };
 type ExecuteDetails = { target: Target; func?: (...args: unknown[]) => unknown; args?: unknown[]; files?: string[]; world?: "ISOLATED" | "MAIN" };
 type CssDetails = { target: Target; css?: string; files?: string[] };
 type ExecuteRequest = { files?: string[]; func?: string; args?: unknown[]; code?: string; world: "ISOLATED" | "MAIN" };
+
+/** An extension path as the converter keys files: "./js/a.js" and "/js/./a.js" both name "js/a.js", as in Chrome. */
+const filePath = (path: string) => path.split("/").filter((part) => part !== "" && part !== ".").join("/");
+
+/** Whether an error is the page's CSP refusing eval: Chrome's EvalError, Firefox's message, or one from another realm. */
+export function isEvalBlocked(error: unknown): boolean {
+  const { name, message } = (error ?? {}) as { name?: unknown; message?: unknown };
+  return error instanceof EvalError || name === "EvalError" || /Content Security Policy|unsafe-eval|\bCSP\b/.test(String(message));
+}
 
 /** The background's side: chrome.scripting, and the MV2 members on chrome.tabs. */
 export function createScripting(deps: { messaging: Messaging; assets: Pick<Assets, "text">; log: Logger; currentTab(): Promise<number | undefined> }) {
@@ -97,11 +106,10 @@ export function createInjector(deps: { gm: Gm; chrome: object; network: Network;
     return JSON.parse(element.getAttribute("data-result") ?? "null");
   };
 
-  const isEvalBlocked = (error: unknown) => error instanceof EvalError || (error instanceof Error && /Content Security Policy|unsafe-eval/.test(error.message));
 
   const execute = async (request: ExecuteRequest): Promise<unknown> => {
     for (const path of request.files ?? []) {
-      const factory = deps.injectables[path.replace(/^\/+/, "")];
+      const factory = deps.injectables[filePath(path)];
       if (!factory) throw new Error(`Could not load file: '${path}'.`);
       if (request.world === "MAIN") await inPage(`(${factory.toString()})(undefined, undefined, window.fetch, window.XMLHttpRequest)()`);
       else deps.withGlobals(deps.chrome, factory(deps.chrome, deps.chrome, deps.network.fetch, deps.network.XMLHttpRequest));
@@ -115,7 +123,7 @@ export function createInjector(deps: { gm: Gm; chrome: object; network: Network;
         fn = new Function("chrome", "browser", "fetch", "XMLHttpRequest", `return (${request.func});`)(deps.chrome, deps.chrome, deps.network.fetch, deps.network.XMLHttpRequest);
       } catch (error) {
         if (!isEvalBlocked(error)) throw error;
-        log.once("scripting-eval", "this page's CSP forbids eval, so executeScript's function runs in the page's world, without chrome.*");
+        log.once("scripting-eval", "this page's CSP forbids eval, so executeScript's function runs in the page's world, where the page can see its arguments and result, without chrome.*");
         return inPageWorld();
       }
       return await deps.withGlobals(deps.chrome, () => fn(...args));
@@ -125,7 +133,7 @@ export function createInjector(deps: { gm: Gm; chrome: object; network: Network;
         return deps.withGlobals(deps.chrome, () => (0, eval)(request.code as string));
       } catch (error) {
         if (!isEvalBlocked(error)) throw error;
-        log.once("scripting-eval", "this page's CSP forbids eval, so executeScript's code runs in the page's world, without chrome.*");
+        log.once("scripting-eval", "this page's CSP forbids eval, so executeScript's code runs in the page's world, where the page can see it, without chrome.*");
         await gm.addElement(root(), "script", { textContent: request.code });
         return null;
       }
