@@ -60,10 +60,7 @@ export function collectAssets(model: Model, files: ExtensionFiles, getUrls: read
         warnings.push(`content_scripts[${i}].css: ${path} isn't in the extension`);
         return [];
       }
-      return [decodeText(bytes).replace(CSS_URL, (whole, _quote, target: string) => {
-        const asset = cssTarget(target, path);
-        return asset !== undefined && include(asset, path) ? `url("${ASSET_PREFIX}${encodeURIComponent(asset)}")` : whole;
-      })];
+      return [rewriteCssUrls(decodeText(bytes), path, (asset) => include(asset, path))];
     }),
   );
 
@@ -72,13 +69,24 @@ export function collectAssets(model: Model, files: ExtensionFiles, getUrls: read
   return { table, css, warnings };
 }
 
-/** The extension file a CSS url() points at, or undefined for data:, remote and fragment-only URLs. */
-function cssTarget(target: string, cssPath: string): string | undefined {
-  const url = target.trim();
+/** The asset placeholder for an extension file, which the runtime swaps for the file's blob: URL (src/runtime/assets.ts). */
+export const assetPlaceholder = (path: string) => `${ASSET_PREFIX}${encodeURIComponent(path)}`;
+
+/** Rewrites each url() in CSS that names an extension file the table will hold (keep says whether it does) to a placeholder. */
+export function rewriteCssUrls(css: string, cssPath: string, keep: (asset: string) => boolean): string {
+  return css.replace(CSS_URL, (whole, _quote, target: string) => {
+    const asset = extensionPath(target, cssPath);
+    return asset !== undefined && keep(asset) ? `url("${assetPlaceholder(asset)}")` : whole;
+  });
+}
+
+/** The extension file a URL in a file at fromPath points at, or undefined for data:, remote and fragment-only URLs. */
+export function extensionPath(target: string, fromPath: string): string | undefined {
+  const url = target.trim().replace(/[?#].*$/, "");
   if (url === "" || url.startsWith("#") || url.startsWith("//") || /^(?:data|https?|blob|about|file):/i.test(url)) return undefined;
   const own = /^(?:chrome|moz)-extension:\/\/__MSG_@@extension_id__\/(.*)$/i.exec(url);
   try {
-    return own ? joinPath("", own[1]) : joinPath(url.startsWith("/") ? "" : dirname(cssPath), url);
+    return own ? joinPath("", own[1]) : joinPath(url.startsWith("/") ? "" : dirname(fromPath), url);
   } catch {
     return undefined;
   }

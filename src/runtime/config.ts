@@ -48,6 +48,23 @@ export type RuntimeConfig = {
   commands?: Record<string, { description?: string; keys: Record<string, string> }>;
   /** The toolbar button (action, browser_action or page_action), if the manifest has one, and whether it has a popup. */
   action?: { key: string; title?: string; popup: boolean };
+  /** The popup and options pages (spec §6), each built in a modal when opened. */
+  pages?: Partial<Record<PageKind, PageConfig>>;
+};
+
+export type PageKind = "popup" | "options";
+/** A page's DOM as the runtime builds it: text as a string, an element as [name, attributes, children]. */
+export type PageNode = string | [name: string, attributes: Array<[string, string]>, children: PageNode[]];
+export type PageConfig = {
+  /** The page's file, for location-like answers (getURL, sender.url). */
+  path: string;
+  title?: string;
+  htmlAttributes: Array<[string, string]>;
+  bodyAttributes: Array<[string, string]>;
+  head: PageNode[];
+  body: PageNode[];
+  /** The page's style sheets in document order, with asset placeholders. */
+  css: string[];
 };
 
 /**
@@ -66,6 +83,32 @@ export type BackgroundCode = (
   fetch: unknown,
   XMLHttpRequest: unknown,
   __x2uImportMeta: { url: string },
+) => () => void;
+
+/**
+ * A popup or options page's code as a factory, called each time the page opens. Its parameters shadow the globals an
+ * extension page reaches (spec §3.3): the window, document, location and history of the modal's iframe, its timers (so
+ * they stop when the page closes) and its DOMParser (so Trusted Types sees the frame's policy).
+ */
+export type PageCode = (
+  chrome: unknown,
+  browser: unknown,
+  window: unknown,
+  self: unknown,
+  globalThis: unknown,
+  document: unknown,
+  location: unknown,
+  history: unknown,
+  localStorage: unknown,
+  fetch: unknown,
+  XMLHttpRequest: unknown,
+  setTimeout: unknown,
+  setInterval: unknown,
+  clearTimeout: unknown,
+  clearInterval: unknown,
+  DOMParser: unknown,
+  /** The extension's root URL, chrome-extension://<id>/, for each module script's import.meta.url. */
+  __x2uBase: string,
 ) => () => void;
 
 /**

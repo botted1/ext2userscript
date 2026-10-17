@@ -50,6 +50,16 @@ describe("emit", () => {
     assert.deepEqual((globalThis as unknown as { __ran: unknown[] }).__ran, [chrome, chrome]);
   });
 
+  it("passes each page's code to start() as a factory whose parameters shadow the page's globals", () => {
+    let pages: Record<string, (...args: unknown[]) => () => unknown> = {};
+    const runtime = "var __x2uRuntime = { start: (config, code, background, injectables, pages) => __received(pages) };";
+    const userscript = emit("// h", "__RUNTIME__", config, [], null, {}, { popup: "return [window, document, globalThis, setTimeout, DOMParser, __x2uBase];" });
+    new Function("__received", userscript.replace("__RUNTIME__", runtime))((received: typeof pages) => (pages = received));
+    const names = ["chrome", "browser", "window", "self", "globalThis", "document", "location", "history", "localStorage", "fetch", "XMLHttpRequest", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "DOMParser", "__x2uBase"];
+    assert.deepEqual(Object.keys(pages), ["popup"]);
+    assert.deepEqual(pages.popup(...names)(), ["window", "document", "globalThis", "setTimeout", "DOMParser", "__x2uBase"]);
+  });
+
   it("lets content code declare its own chrome or browser", () => {
     const userscript = emit("// h", "__RUNTIME__", config, [{ world: "ISOLATED", code: "const browser = chrome; let chrome2 = browser; globalThis.__same = chrome2 === chrome;" }]);
     const { code } = run(userscript);

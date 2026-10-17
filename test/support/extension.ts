@@ -6,6 +6,7 @@
 // - networkExtension fetches from another origin, which sends no CORS headers, in the background and content scripts.
 // - apiExtension uses alarms, context menus, the toolbar button, a shortcut, scripting, notifications, cookies,
 //   permissions, windows and getBackgroundPage.
+// - pagesExtension has a popup, an options page, a background and a content script talking to each other.
 // - plainExtension is the smallest one that converts with no unsupported or partial entries.
 import { strToU8, zipSync } from "fflate";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
@@ -263,5 +264,84 @@ export function plainExtension(origin = "https://example.com"): ExtensionFiles {
       content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"] }],
     }),
     "content.js": 'chrome.storage.local.set({ seen: true }); document.documentElement.dataset.plain = "1";',
+  });
+}
+
+/**
+ * A popup, an options page, a background and a content script talking to each other (spec §6). The popup reports on
+ * its own <body>; the content script, on the tab's <html>.
+ */
+export function pagesExtension(origin: string): ExtensionFiles {
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "Pages Sample",
+      version: "1.0.0",
+      background: { service_worker: "sw.js" },
+      host_permissions: [`${origin}/*`],
+      action: { default_title: "Pages", default_popup: "popup/popup.html" },
+      options_ui: { page: "options.html" },
+      commands: { _execute_action: { suggested_key: { default: "Alt+Shift+P" } } },
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"] }],
+    }),
+    "icon.png": PIXEL,
+    "sw.js": `chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.from === "popup") sendResponse("background saw " + sender.url.split("/").slice(3).join("/") + (sender.tab ? " in a tab" : ""));
+  if (message === "open popup") {
+    chrome.action.openPopup().then(() => sendResponse("opened"), (error) => sendResponse(error.message));
+    return true;
+  }
+});
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "popup") return;
+  port.onDisconnect.addListener(() => chrome.tabs.query({ active: true }).then(([tab]) => chrome.tabs.sendMessage(tab.id, { popupClosed: true })));
+});`,
+    "content.js": `const html = document.documentElement;
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.popupSays) {
+    html.dataset.popupSays = message.popupSays + (sender.tab ? " from a tab" : "");
+    sendResponse("content ok");
+  }
+  if (message.popupClosed) html.dataset.popupClosed = "1";
+});
+html.dataset.content = "ready";
+document.addEventListener("x2u-ask-pages", () => chrome.runtime.sendMessage("who is open?").then((reply) => (html.dataset.pagesReply = String(reply))));
+document.addEventListener("x2u-open-popup", () => chrome.runtime.sendMessage("open popup").then((reply) => (html.dataset.openPopup = reply)));`,
+    "popup/popup.html": `<!doctype html><html><head><meta charset="utf-8"><title>Pop</title><link rel="stylesheet" href="popup.css"></head>
+<body><h1 id="title" style="color: rgb(7, 8, 9)">Pages</h1><img id="logo" src="../icon.png"><button id="options">Options</button>
+<script src="lib.js"></script><script src="popup.js"></script><script src="broken.js"></script></body></html>`,
+    "popup/broken.js": "throw new Error('a broken script');",
+    "popup/popup.css": "body { width: 240px; margin: 0; background: url(../icon.png); } h1 { font-size: 20px; }",
+    "popup/lib.js": "var shared = 'lib' // no trailing newline",
+    "popup/popup.js": `const body = document.body;
+body.dataset.shared = shared;
+document.addEventListener("DOMContentLoaded", () => (body.dataset.loaded = "1"));
+window.addEventListener("load", () => (body.dataset.load = "1"));
+document.getElementById("options").addEventListener("click", () => chrome.runtime.openOptionsPage());
+chrome.runtime.sendMessage({ from: "popup" }).then((reply) => (body.dataset.reply = reply));
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message === "who is open?") sendResponse("popup, asked by " + (sender.tab ? "a tab" : "?"));
+});
+chrome.tabs
+  .query({ active: true, currentWindow: true })
+  .then(([tab]) => chrome.tabs.sendMessage(tab.id, { popupSays: "hi" }))
+  .then((reply) => (body.dataset.tabReply = reply));
+chrome.action.setBadgeText({ text: "7" }).then(() => chrome.action.getBadgeText({})).then((text) => (body.dataset.badge = text));
+localStorage.setItem("seen", "popup");
+chrome.runtime.connect({ name: "popup" });
+chrome.runtime.getBackgroundPage().then((page) => (body.dataset.backgroundPage = typeof page.chrome), () => (body.dataset.backgroundPage = "elsewhere"));
+body.dataset.image = String(getComputedStyle(body).backgroundImage.startsWith('url("blob:'));
+body.dataset.top = String(window.top === window && self === window);
+const sink = document.createElement("div");
+body.append(sink);
+try { sink.innerHTML = "<b>ok</b>"; body.dataset.sink = sink.firstChild.nodeName; } catch (error) { body.dataset.sink = "threw: " + error.message; }
+try { body.dataset.parsed = new DOMParser().parseFromString("<i>x</i>", "text/html").body.firstChild.nodeName; } catch (error) { body.dataset.parsed = "threw"; }
+try { sink.insertAdjacentHTML("beforeend", "<u>y</u>"); body.dataset.adjacent = sink.lastChild.nodeName; } catch (error) { body.dataset.adjacent = "threw"; }
+try { sink.innerHTML = '<img src="data:," onerror="document.body.dataset.inline = 1">'; } catch {}`,
+    "options.html": `<!doctype html><title>Options</title><p id="seen"></p><script type="module" src="options.js"></script>`,
+    "options.js": `import { label } from "./label.js";
+document.getElementById("seen").textContent = label(localStorage.getItem("seen"));
+document.body.dataset.meta = import.meta.url;`,
+    "label.js": 'export const label = (value) => "seen:" + value;',
   });
 }

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadEsbuild } from "../../src/convert/esbuild-node.ts";
 import { convert, inspect } from "../../src/convert/index.ts";
-import { plainExtension, sampleExtension } from "../support/extension.ts";
+import { pagesExtension, plainExtension, sampleExtension } from "../support/extension.ts";
 
 const origin = "http://127.0.0.1:4567";
 /** A stand-in for the built runtime: convert() only embeds it. */
@@ -30,6 +30,18 @@ describe("convert", () => {
     assert.equal(config.assets["img/dot.png"][0], "image/png");
     assert.deepEqual(config.groups[0].css, ['.x2u-box { color: rgb(1, 2, 3); background-image: url("x2u-asset:img%2Fdot.png"); }']);
     assert.deepEqual(Object.keys(config.locales).sort(), ["en", "fr"]);
+  });
+
+  it("bundles the popup and options pages, with the files they show in the asset table", async () => {
+    const { userscript, report } = await convert(pagesExtension(origin), { runtime, esbuild: await loadEsbuild() });
+    const config = JSON.parse(/__x2uRuntime\.start\((\{.*?\}), \[\n/s.exec(userscript)?.[1] ?? "{}");
+    assert.deepEqual(Object.keys(config.pages), ["popup", "options"]);
+    assert.deepEqual([config.pages.popup.path, config.pages.popup.title, config.pages.options.title], ["popup/popup.html", "Pop", "Options"]);
+    assert.deepEqual(Object.keys(config.assets), ["icon.png"]);
+    assert.match(userscript, /\npopup: function \(chrome, browser, window, /);
+    assert.match(userscript, /\noptions: function \(chrome, browser, window, /);
+    assert.ok(report.warnings.includes("popup/popup.html: its images and fonts may not show under Tampermonkey on sites whose CSP limits img-src or font-src"));
+    assert.doesNotThrow(() => new Function(userscript), "the userscript parses");
   });
 
   it("leaves --ignore-assets files out", async () => {
