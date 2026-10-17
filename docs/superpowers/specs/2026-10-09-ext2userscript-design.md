@@ -48,6 +48,8 @@ ext2userscript/
       unpack.ts         # zip / xpi / crx2 / crx3 → Map<path, Uint8Array>
       manifest.ts       # normalise MV2/MV3 → Model; locale resolution
       bundle.ts         # context wrappers, classic-script concat; ES modules go through esbuild.ts
+      html.ts           # a small HTML parser for popup and options pages
+      pages.ts          # popup and options pages: DOM tree, CSS, code (§6)
       analyze.ts        # chrome.*/browser.* usage scan → report entries
       support.ts        # the API support table (single source of truth)
       assets.ts         # asset table (inlined files)
@@ -65,7 +67,8 @@ ext2userscript/
       registry.ts       # tab registry: heartbeat, roster doorbell, discovery
       bus.ts            # in-tab + cross-tab messaging
       elect.ts          # background leader election from the registry
-      tabs.ts storage.ts alarms.ts menus.ts ui.ts net.ts i18n.ts scripting.ts ...
+      tabs.ts storage.ts alarms.ts menus.ts net.ts i18n.ts scripting.ts ...
+      ui.ts pages.ts    # the popup and options pages' modal, and their chrome object (§6)
     cli.ts              # download from stores, read dirs/files, call convert, write output
     download.ts         # CWS / AMO / Edge Add-ons fetchers (CLI and proxy)
   web/                  # static Vite site, vanilla TS
@@ -126,14 +129,20 @@ Every context is wrapped in one function whose parameters shadow the globals the
 
 - All contexts: `chrome` and `browser`, both pointing to the same runtime object for that context.
 - Background: `self`, `globalThis`, `window`, `document` and `importScripts`. `self` and `globalThis` are a background global shim. In a service worker, `window` and `document` are `undefined`, as in Chrome; in an MV2 background page, `window` is the shim and `document` is the tab's document.
-- Background and content scripts: `fetch` and `XMLHttpRequest`, the network shim (§5.2). A service worker gets `XMLHttpRequest` undefined, as in Chrome.
-- Popup and options: `window`, `document`, `location` and `history`, bound to the UI iframe (§6).
+- Background, content scripts, popup and options: `fetch` and `XMLHttpRequest`, the network shim (§5.2). A service worker gets `XMLHttpRequest` undefined, as in Chrome.
+- Popup and options (§6):
+  - `window`, `self` and `globalThis`: a proxy over the UI iframe's window, with `chrome`, `browser`, `localStorage`, `fetch`, `XMLHttpRequest` and `close()` (which closes the page) on top;
+  - `document`, `location` and `history`: the iframe's own;
+  - `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval`: the iframe's, so the page's timers stop when it closes;
+  - `DOMParser`: the iframe's, so Trusted Types sees the frame's policy (§6).
 - Background, popup and options: `localStorage`, bound to the extension-wide storage shim (§5.1), so settings don't land in each site's own storage.
 
 Inside that wrapper, code goes in one of two ways.
 
 - **Classic scripts** (`background.scripts`, content script `js[]`, `<script>` without `type="module"`, a classic `service_worker`):
   - They are **concatenated as text in manifest/DOM order**. This matches how a browser runs them: one shared scope, so top-level `var`/function declarations stay visible to later files.
+  - In a popup or options page, the parser-blocking classic scripts run first; deferred (`defer`, `async`) classic scripts and module scripts then run together, in document order, as Chrome runs them.
+  - Inline `<script>`s are dropped with a warning: an extension page's CSP never runs them. Inline data blocks (a non-JavaScript `type`, such as `text/x-template` or JSON) stay in the page's DOM for its code to read.
   - esbuild is not used for them, so nothing gets hoisted or renamed.
   - **`importScripts("a.js", "b.js")`** with string-literal arguments is replaced at build time by the files' contents, in order. Any other form adds a report entry: partial, "dynamic importScripts".
   - Ceiling: classic code that reaches bare globals (e.g. `addEventListener(...)` without `window.`) hits the userscript's global rather than the shim. Upgrade path: an AST rewrite of the free identifiers, if the benchmark shows it matters.
@@ -141,7 +150,7 @@ Inside that wrapper, code goes in one of two ways.
   - Options: `bundle: true`, `format: "esm"`, `write: false`, `platform: "browser"`, `target: "es2020"`.
   - A **virtual-fs plugin** resolves every path against the unpacked file map.
   - Dynamic `import()` of a local path is bundled. Dynamic `import()` of a remote URL is reported as unsupported.
-  - esbuild bundles to an IIFE, so no `export` statements are left, and the bundle is placed inside the wrapper, whose parameters shadow the globals here too. `import.meta` becomes an object the wrapper passes in, whose `url` is `chrome-extension://<id>/<entry>`; every bundled module sees the entry's URL.
+  - esbuild bundles to an IIFE, so no `export` statements are left, and the bundle is placed inside the wrapper, whose parameters shadow the globals here too. `import.meta` becomes an object the wrapper passes in, whose `url` is `chrome-extension://<id>/<entry>`; every bundled module sees the entry's URL. In a popup or options page, each module script is its own entry, so its `import.meta.url` is its own file's.
 - **Output:** one string per context. Nothing is minified unless `--minify` is passed, which runs esbuild's minifier over the final file.
 
 ### 3.4 Analyze
@@ -219,9 +228,10 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
   - Ceiling: an API the analyzer misses (aliasing, §3.4) gets no grant, so its gm method rejects with an error naming the API.
 - **Synchronous APIs on async gm:** `localStorage` in the background, popup and options is the only synchronous extension API backed by GM.
   - It's a Storage shim over `x2u:<ns>:ls:*` values, loaded into a cache before the context's code starts.
-  - Writes update the cache immediately and go to `gm.setValue`. Other tabs' caches follow through value listeners.
+  - Writes update the cache immediately and go to `gm.setValue`. Other tabs' caches follow through value listeners, one per key; a tab that creates a key rings `x2u:<ns>:ls-keys`, and the others start following it.
+  - The background and the pages in a tab share one copy.
   - Content scripts keep the page's real `localStorage`, as in a real extension.
-  - Ceiling: code that writes `window.localStorage` explicitly still reaches the site's storage. Upgrade path: a `window` proxy, if the benchmark shows it matters.
+  - The background's and the pages' `window` proxies (§3.3) answer `window.localStorage` with the shim too.
 - **CI:** the emulator (§10.2) provides exactly the `GM_*` functions in the grant table, so CI runs the real `gm.ts`.
 
 **Revision (S1):** `document_start` is best-effort. Tampermonkey 5.5.1 and Violentmonkey 2.49.0 start a `document-start` userscript 16–46 ms after navigation start, whatever `@sandbox`, `@inject-into` or `@grant` say (measured with default manager settings, unpacked builds, on one machine against local pages). A page script that runs earlier wins. The "call before the first `await`" rule still holds and still matters: it keeps `gm.addElement` synchronous, so a page-world script runs at the userscript's own start time. The release-tier conformance test pins this weaker contract: the injection must beat a page script that runs at least 200 ms after navigation start.
@@ -232,8 +242,8 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 |---|---|---|
 | `storage.local` / `sync` / `session` | supported | One GM value per key under `x2u:<ns>:s:<area>:<key>`. `session` is cleared when a new leader detects a fresh browser session (§5.4). |
 | `storage.onChanged`, `storage.<area>.onChanged` | supported | `gm.addValueChangeListener` on the keys, which works across tabs |
-| `runtime.sendMessage` / `onMessage` / `connect` / `onConnect` / `Port` | supported | §5.3 |
-| `runtime.getURL`, `getManifest`, `id`, `lastError`, `onInstalled`, `onStartup`, `openOptionsPage`, `getPlatformInfo` | supported | `onInstalled` fires once per installed version (tracked in GM storage) |
+| `runtime.sendMessage` / `onMessage` / `connect` / `onConnect` / `Port` | supported; `connect` partial | §5.3. A port from a content script or a page reaches the background only; one from the background reaches no extension page. |
+| `runtime.getURL`, `getManifest`, `id`, `lastError`, `onInstalled`, `onStartup`, `openOptionsPage`, `getPlatformInfo` | supported | `onInstalled` fires once per installed version (tracked in GM storage). `openOptionsPage` opens the options page in place of the popup, or, from the background, in the active tab (§6). |
 | `runtime.onMessageExternal`, `sendNativeMessage` | unsupported | |
 | `tabs.query` / `get` / `getCurrent` / `sendMessage` / `create` / `update(url)` / `remove` / `reload` | supported | Tab registry (§5.3). `create` uses `gm.openInTab`. `remove` and `update` work by messaging the target tab, which calls `window.close()` or sets `location`. `close` only works for tabs opened by the script; otherwise the report says partial. |
 | `tabs.onUpdated` / `onRemoved` / `onCreated` / `onActivated` | supported | Derived from registry changes. `onActivated` uses `visibilitychange`. |
@@ -242,7 +252,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 | `tabs.executeScript` / `insertCSS` / `removeCSS` (MV2) | partial | Same path as above; `code` that can't be evaluated runs in the page's world with a null result |
 | `alarms.*` | supported | Persisted schedule; fired by the background leader |
 | `contextMenus` / `menus` | partial | Each item becomes a `gm.registerMenuCommand` entry in every tab, kept in a GM value. `onClicked` receives `{menuItemId, pageUrl}` and any selected text, but no link or media context; items only for links, images, media or editable fields don't show. |
-| `action` / `browserAction` / `pageAction` `.onClicked`; `openPopup` | supported; with the popup (§6) | A button without a popup is a menu command named after its title; one with a popup gets "Open <name>" (§6) |
+| `action` / `browserAction` / `pageAction` `.onClicked`; `openPopup` | supported; with the popup (§6) | A button without a popup is a menu command named after its title; one with a popup gets "Open <title>" (§6). `openPopup` opens it in the active tab. `setPopup` and `getPopup` are partial: the button keeps the manifest's popup. |
 | `action.setBadgeText` / `setIcon` / `setTitle` | partial | Stored. The title and badge show in the menu command's caption; there is no toolbar to show the icon on. Settings made with a `tabId` apply to that tab only, and a page action shows only on the tabs it was shown on. |
 | `commands.onCommand` + manifest `commands` | partial | `keydown` listener on each page, mapping suggested keys per platform: a shortcut works only while such a page has focus |
 | `notifications.create` / `onClicked` / `onClosed`; `update` / `clear` | supported; partial | `gm.notification` on the leader's tab. `update` shows it again under the same tag, which the managers treat as a replacement; one already shown can't be taken back, and buttons don't show. |
@@ -250,12 +260,15 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 | `permissions.contains` / `getAll` / `request` / `remove` | partial | Answers come from the manifest. `request` resolves true, and removals persist in GM storage. |
 | `cookies.*` | partial | `gm.cookie`, which needs `caps.cookies` (TM, and VM since 2.35.1; VM returns httpOnly cookies only when the user enables that). Where it's missing, the calls reject (§5.1). |
 | `extension.getBackgroundPage`, `runtime.getBackgroundPage` | partial | Works only when the current tab is the leader; otherwise rejects |
+| `extension.getViews` | partial | Returns no views: each extension page opens in a tab's modal of its own |
+| In a popup or options page: `alarms`, `contextMenus` / `menus`, the toolbar button, `commands`, `notifications`, `permissions` | partial | Their methods run in the leader's background, where their state lives; their events fire there only |
 | `webRequest`, `declarativeNetRequest`, `proxy`, `identity`, `offscreen`, `sidePanel`, `devtools`, `debugger`, `tabCapture`, `downloads` | unsupported | Reject with `Error("ext2userscript: chrome.X is not available in userscripts")`, logged once |
 
 Network: `fetch` and `XMLHttpRequest` in the background and content contexts are shimmed, so that cross-origin requests to `host_permissions` hosts go through `gm.xmlHttpRequest`. Same-origin requests use the native implementation. Responses support `text`, `json`, `blob` and `arrayBuffer`. Streaming bodies are a known ceiling: they are buffered. Extension URLs (`chrome-extension://<id>/…`, which a background's relative URLs resolve to), and the `blob:` URLs `runtime.getURL` hands out, are answered from the asset table in the page, so the page's CSP can't refuse them. A background's request to a host the extension has permission for carries cookies unless it sets `credentials: "omit"`; a content script's follows the page's own rules, carrying cookies only with `credentials: "include"` or `withCredentials`, so a page can't use it to read the user's signed-in pages elsewhere. More ceilings: uploads report no progress, a synchronous `XMLHttpRequest` can't go through `gm.xmlHttpRequest`, and `window.fetch` called explicitly from a content script isn't shimmed.
 
 ### 5.3 Messaging
 - **In-tab:** content ↔ popup/options ↔ background (when this tab is the leader) is delivered directly through an in-memory bus with structured clone semantics (`structuredClone`).
+- **Extension pages:** `runtime.sendMessage` from a content script, a page or the background reaches the background (unless it sent it) and every open extension page but the sender's. A tab with a popup or options page open says so in its registry entry (`page`), so the others know where pages are. The first answer wins; with none, the call settles as closed if anyone listened, and with "Receiving end does not exist" otherwise.
 - **Cross-tab:** single-writer outbox keys, so concurrent writes never lose messages:
   - Each tab writes only `x2u:<ns>:out:<tabId>`, which holds a per-page `epoch` and a ring buffer of its last 64 messages from the past 10s `{seq, t, to, payload}`. The age limit keeps large messages from being rewritten with every later send.
   - Each tab listens (via `gm.addValueChangeListener`) to the outbox keys of every other live tab, and tracks the last `seq` it has read per sender.
@@ -283,6 +296,7 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 - **Handover:** a leader's `pagehide` deletes its registry key and rings the roster (§5.3), so the next-oldest tab takes over at once. A leader that disappears without `pagehide` (crash, tab discard) is replaced once the ghost check (§5.3) finds it, about 1.5 s after the next ring (a tab starting, or one becoming visible or navigating), or when its heartbeat goes stale.
 - **New leader:**
   - It runs the background bundle from the top.
+  - An extension with a popup or options page but no background still elects a leader. It runs no code, but keeps the extension's state (menus, alarms, the toolbar button, notifications, permissions) for the pages, which call it there (§5.2).
   - It fires `runtime.onStartup` only for the first leader of a browser session. The leader writes `x2u:<ns>:session` with a timestamp on every beat; a new leader that finds it missing or older than 90s treats the browser as restarted. The same check clears `storage.session` (§5.2).
   - It fires `onInstalled` once per version.
 - **What survives a handover:** storage only. This matches MV3 service-worker semantics. MV2 extensions with `persistent: true` are reported as partial.
@@ -298,19 +312,28 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 **Revision (S1):** `world: "MAIN"` and `document_start` groups run when the manager starts the userscript, not guaranteed before the page's first scripts. With GM functions granted, the script is isolated whatever the header, so `gm.addElement` is the only route tested into the page world (`@grant unsafeWindow` was not tested). It runs synchronously and gets past a nonce-only CSP on both managers (measured with default manager settings, unpacked builds, on one machine against local pages). The report marks `run_at: document_start` as **partial** ("best-effort: may run after the page's earliest scripts").
 
 ## 6. Popup and options pages
-- **Opening:** "Open <name>" and "<name> options" menu commands (plus `action.onClicked`, `runtime.openOptionsPage` and `action.openPopup`) open a modal. The modal lives in a closed shadow root and contains a same-origin `about:blank` iframe.
+- **Opening:** "Open <title>" (the toolbar button's title, with its badge as for the button) and "<name> options" menu commands, plus the button's shortcut (`_execute_action`), `runtime.openOptionsPage` and `action.openPopup`, open a modal. The modal lives in a closed shadow root and contains a same-origin `about:blank` iframe.
+  - Its host is in the top layer (`popover="manual"`), with inline `!important` styles, so a site's own `!important` rules, a transform on `<html>` or an overlay at the highest z-index can't hide or move it.
+  - The popup sits at the top right. The options page is centred, with a title bar, a close button and a backdrop.
+  - Escape, a click outside, the close button or `window.close()` closes it, after `pagehide` and `unload` are dispatched to the iframe's window. The listeners the page added are removed and its ports disconnected, so the background sees it go.
+  - One page per tab: opening the open one focuses it; opening the other replaces it.
 - **Filling the iframe:**
-  - The page's HTML is parsed at build time. The runtime builds the body and head nodes in the iframe document with `createElement`, `setAttribute` and `append` (see the revision below).
-  - `<link rel=stylesheet>` and `<style>` become `gm.addElement(iframeDoc.head, 'style', {textContent})`, which gets past CSP rules that block inline styles (not yet tested against such a CSP).
+  - The page's HTML is parsed at build time, by a hand-written parser (`src/convert/html.ts`). Its ceiling: of HTML's implied end tags, only a new `li`, `option`, `p`, `dt`/`dd` or table cell or row closes an open one of its kind; misnested tags otherwise come out as written, and unknown named character references stay as written.
+  - The runtime builds the body and head nodes in the iframe document with `createElement`, `setAttribute` and `append` (see the revision below). A `style` attribute is set through the CSSOM, which a site's CSP doesn't block.
+  - Inline `on*` handlers and `<link>`s other than style sheets are dropped at build time: an extension page's CSP never runs the one, and the other does nothing in a modal.
+  - `<link rel=stylesheet>` and `<style>` become `gm.addElement(iframeDoc.head, 'style', {textContent})`, which gets past CSP rules that block inline styles: measured, the page's CSS applies under `style-src 'self'` on both managers.
   - Assets are rewritten to blob URLs.
 - **Scripts:** the page's scripts are not inserted as `<script>` elements. The bundled UI code runs inside the userscript, with its wrapper parameters bound to the iframe's `window`/`document`, and the page's CSP doesn't apply to it. `DOMContentLoaded` and `load` are dispatched to the iframe's window after insertion.
 - **Size:** the popup modal sizes itself to the content (max 800×600). The options page opens as a larger modal.
-- **Known ceiling:** sites whose CSP blocks `blob:` or `data:` in `img-src`/`font-src` may still lose images and fonts in the modal. The report adds a warning when the UI uses them. Spike S2 measured this on GitHub, YouTube and X and saw no asset failures, even where `font-src` omits `blob:` (GitHub, X) or `data:` (GitHub). The cause wasn't investigated, so the warning stays.
+- **Known ceiling:** sites whose CSP blocks `blob:` or `data:` in `img-src`/`font-src` may still lose images and fonts in the modal. The report adds a warning when the UI uses them: "<page>: its images and fonts may not show under Tampermonkey on sites whose CSP limits img-src or font-src". Spike S2 measured this on GitHub, YouTube and X and saw no asset failures, even where `font-src` omits `blob:` (GitHub, X) or `data:` (GitHub). The popup plan measured it on a local page with `img-src 'self'`: Tampermonkey didn't load the modal's `blob:` images, and Violentmonkey did.
+- **Ceiling:** a link or a `location` change to another extension page leaves the page (the iframe navigates away from it).
 
 **Revision (S2):** On a site that sends `require-trusted-types-for 'script'` (YouTube), Tampermonkey 5.5.1 throws on `innerHTML` (on the iframe's body) and on `DOMParser.parseFromString`; Violentmonkey 2.49.0 allows both. The cause wasn't investigated.
 - The converter parses popup and options HTML at build time, and the runtime builds the iframe DOM with `createElement`, `setAttribute` and `append`, with no `DOMParser` step. Cost: the parse runs in Node (the CLI) and in the web app's Web Worker (§8), and neither has `DOMParser`, so it needs an HTML-parser dependency (§2 has none yet) or a small hand-written parser with a stated ceiling. The popup plan chooses.
-- Extension UI code that assigns HTML strings still throws on such sites under Tampermonkey: measured for `innerHTML` and `DOMParser.parseFromString`; expected, not measured, for `outerHTML`, `insertAdjacentHTML` and `document.write`. The analyzer flags these sinks, and the report warns: "popup may break on sites that enforce Trusted Types, under Tampermonkey".
-- Not measured: YouTube's header has no `trusted-types` allow-list, so the runtime may be able to create policies in the iframe's realm: a named one for its own parse step (instead of parsing at build time), or a pass-through `default` one that would also cover extension code.
+- The popup plan chose a small hand-written parser, so there is no dependency.
+- Extension UI code that assigns HTML strings: the popup plan measured, on a local page with `require-trusted-types-for 'script'`, that Tampermonkey 5.5.1 throws on `innerHTML`, `DOMParser.parseFromString` and `insertAdjacentHTML` in the modal. So the runtime creates a pass-through `default` policy in the iframe's realm, and passes the iframe's own `DOMParser` as a wrapper parameter (§3.3). With them, none of the three throws on either manager.
+  - The iframe also gets a `<meta>` CSP of `script-src 'none'; object-src 'none'`, as an extension page's CSP would run no inline script: an inline handler in HTML the page writes doesn't run (measured), so it can't reach the site's world.
+  - Ceiling: a site whose CSP names its allowed policies (`trusted-types <names>`) without `default` refuses the policy, and HTML strings throw there under Tampermonkey (not measured).
 
 ## 7. CLI
 
@@ -361,7 +384,7 @@ Unpack (crx2/crx3 fixtures), manifest normalisation (MV2 and MV3 fixtures, local
   - `sendMessage` both ways and `Port` lifetime;
   - leader election under churn: 5 pages opened and closed randomly for 60s, asserting at most one leader after each settle period and no lost messages;
   - tabs registry events;
-  - the popup bridge on a page with strict CSP (served locally);
+  - the popup bridge on a page with strict CSP (served locally): `test/browser/pages.test.ts`, on the emulator and the release tier;
   - content-group matching with excludes and globs.
 
 ### 10.3 Conformance
