@@ -43,17 +43,31 @@ describe("analyze", () => {
     ]);
   });
 
-  it("reports the pages and manifest features this version doesn't convert", () => {
-    const { entries } = analyze(
+  it("reports the popup and options pages as supported, opened from menu commands, and the manifest features this version doesn't convert", () => {
+    const { entries, methods } = analyze(
       model({ background: { service_worker: "sw.js" }, action: { default_popup: "p.html" }, options_ui: { page: "o.html" }, chrome_url_overrides: { newtab: "n.html" }, commands: { go: { suggested_key: "Alt+G" } } }),
       [],
     );
     assert.deepEqual(entries.map((entry) => [entry.subject, entry.status, entry.contexts]), [
       ["manifest.commands", "partial", ["background"]],
-      ["manifest.action.default_popup", "unsupported", ["popup"]],
-      ["manifest.options_ui", "unsupported", ["options"]],
+      ["manifest.action.default_popup", "supported", ["popup"]],
+      ["manifest.options_ui", "supported", ["options"]],
       ["manifest.chrome_url_overrides", "unsupported", ["background"]],
     ]);
+    assert.deepEqual([...methods].sort(), ["registerMenuCommand", "unregisterMenuCommand"]);
+  });
+
+  it("reports what the popup and options pages use, in their own contexts", () => {
+    const code = "chrome.storage.local.get(); chrome.alarms.onAlarm.addListener(f); chrome.runtime.getBackgroundPage(); chrome.bookmarks.create({}); chrome.notifications.create({})";
+    const { entries, methods } = analyze(model({ action: { default_popup: "p.html" } }), [], undefined, [{ kind: "popup", scan: scan(code) }]);
+    assert.deepEqual(entries.filter((entry) => entry.subject.startsWith("chrome.")).map((entry) => [entry.subject, entry.status, entry.contexts]), [
+      ["chrome.storage.local", "supported", ["popup"]],
+      ["chrome.alarms.onAlarm", "partial", ["popup"]],
+      ["chrome.runtime.getBackgroundPage", "partial", ["popup"]],
+      ["chrome.bookmarks.create", "unsupported", ["popup"]],
+      ["chrome.notifications.create", "supported", ["popup"]],
+    ]);
+    assert.ok(methods.has("notification"));
   });
 
   it("reports host permissions as supported, needing GM_xmlhttpRequest for the network shim", () => {

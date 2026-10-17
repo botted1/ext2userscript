@@ -1,6 +1,6 @@
 // The API support table (spec §5.2): the single source of truth for what the runtime implements. The analyzer reads it
-// for the report, and metadata.ts reads the gm methods a row needs for @grant (spec §5.1). It grows with the runtime:
-// this version converts content scripts and the background, with every API of spec §5.2 but the popup's.
+// for the report, and metadata.ts reads the gm methods a row needs for @grant (spec §5.1). This version converts content
+// scripts, the background, and the popup and options pages.
 import type { GmMethod } from "../runtime/gm.ts";
 import type { Context, Status } from "./report.ts";
 
@@ -50,7 +50,6 @@ export const CONTENT_APIS: Readonly<Record<string, Support>> = {
   "dom.openOrClosedShadowRoot": { status: "unsupported", reason: "a userscript can't reach closed shadow roots" },
 };
 
-const NO_PAGES = "it reaches extension pages, and popups and options pages aren't converted yet";
 const MENUS: readonly GmMethod[] = ["registerMenuCommand", "unregisterMenuCommand"];
 
 /** One row per member, all with the same support. */
@@ -73,7 +72,8 @@ const action = (namespace: string) => ({
   ...rows(namespace, ["getTitle", "getBadgeText", "getBadgeBackgroundColor", "getBadgeTextColor", "enable", "disable", "isEnabled", "show", "hide"], { status: "supported", methods: MENUS }),
   ...rows(namespace, ["setTitle", "setBadgeText"], { status: "partial", reason: "shown in the menu command's caption", methods: MENUS }),
   ...rows(namespace, ["setIcon", "setBadgeBackgroundColor", "setBadgeTextColor"], { status: "partial", reason: "there is no toolbar button to show it on" }),
-  ...rows(namespace, ["setPopup", "getPopup"], { status: "partial", reason: "the popup isn't converted yet" }),
+  ...rows(namespace, ["setPopup", "getPopup"], { status: "partial", reason: "the button keeps the manifest's popup" }),
+  [`${namespace}.openPopup`]: { status: "supported" },
 });
 
 const TOP_FRAME = "only the tab's top frame";
@@ -84,8 +84,10 @@ const TOP_FRAME = "only the tab's top frame";
  */
 export const BACKGROUND_APIS: Readonly<Record<string, Support>> = {
   ...SHARED,
-  "runtime.sendMessage": { status: "partial", reason: NO_PAGES },
-  "runtime.connect": { status: "partial", reason: NO_PAGES },
+  "runtime.sendMessage": { status: "supported" },
+  "runtime.connect": { status: "partial", reason: "a port from the background reaches no extension page" },
+  "runtime.openOptionsPage": { status: "supported" },
+  "extension.getViews": { status: "partial", reason: "returns no views: each extension page opens in a tab's modal of its own" },
   "runtime.onInstalled": { status: "supported" },
   "runtime.onStartup": { status: "supported" },
   "runtime.getPlatformInfo": { status: "supported" },
@@ -140,6 +142,26 @@ export const BACKGROUND_APIS: Readonly<Record<string, Support>> = {
   "scripting.executeScript": { status: "partial", reason: `${TOP_FRAME}; where the page's CSP forbids eval, a function runs in the page's world, without chrome.*, and the page can see its arguments and result` },
   ...rows("scripting", ["insertCSS", "removeCSS"], { status: "partial", reason: TOP_FRAME }),
   ...rows("scripting", ["ExecutionWorld", "StyleOrigin"], { status: "supported" }),
+};
+
+/** Events of the state the background keeps: a page calls those namespaces there (src/runtime/pages.ts). */
+const BACKGROUND_ONLY = "fires in the background only, not in the popup or options page";
+const BACKGROUND_EVENTS = [
+  "alarms.onAlarm", "contextMenus.onClicked", "menus.onClicked", "action.onClicked", "browserAction.onClicked", "pageAction.onClicked",
+  "commands.onCommand", "notifications.onClicked", "notifications.onClosed", "permissions.onAdded", "permissions.onRemoved",
+  "runtime.onInstalled", "runtime.onStartup",
+];
+
+/**
+ * APIs in the popup and options pages: the background's, but for the events of state the background keeps, a port
+ * that reaches the background, and getBackgroundPage, which works only in the tab where the background runs.
+ */
+export const PAGE_APIS: Readonly<Record<string, Support>> = {
+  ...BACKGROUND_APIS,
+  ...Object.fromEntries(BACKGROUND_EVENTS.map((api): [string, Support] => [api, { ...BACKGROUND_APIS[api], status: "partial", reason: BACKGROUND_ONLY }])),
+  "runtime.connect": { status: "supported" },
+  "runtime.getBackgroundPage": { status: "partial", reason: "works only in the tab where the background runs" },
+  "extension.getBackgroundPage": { status: "partial", reason: "works only in the tab where the background runs" },
 };
 
 /** APIs a userscript can never provide (spec §1, out of scope). */

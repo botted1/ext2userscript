@@ -60,7 +60,12 @@ async function prepare(
   const backgroundScan = background.background ? scan(background.background.code) : undefined;
   const { pages, warnings: pageWarnings } = await bundlePages(model, files, options.esbuild);
   const pageScans = pages.map((page) => scan(page.code));
-  const { entries, methods } = analyze(model, scans, backgroundScan ? { scan: backgroundScan, bundle: background } : undefined);
+  const { entries, methods } = analyze(
+    model,
+    scans,
+    backgroundScan ? { scan: backgroundScan, bundle: background } : undefined,
+    pages.map((page, i) => ({ kind: page.kind, scan: pageScans[i] })),
+  );
   // Files the background names that it may inject: scripts are bundled like content scripts, style sheets go in the asset table.
   // "./js/a.js" and "/js/a.js" name the same file as "js/a.js", as in Chrome.
   const injectable = [...new Set((backgroundScan?.files ?? []).map((path) => path.split("/").filter((part) => part !== "" && part !== ".").join("/")))].filter((path) => files.has(path));
