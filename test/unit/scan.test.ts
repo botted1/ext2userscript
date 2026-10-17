@@ -47,6 +47,15 @@ describe("scan", () => {
     assert.deepEqual(scan("chrome.runtime.getURL(`img/${name}.png`)").urls, []);
   });
 
+  it("notices storage that belongs to the site, and custom elements, by bare name or on window", () => {
+    assert.deepEqual(scan("indexedDB.open('db'); window.sessionStorage.getItem('x'); customElements.define('a-b', C); foo.indexedDB; indexedDB.x;").globals, ["indexedDB", "sessionStorage", "customElements"]);
+  });
+
+  it("lists the code's top-level declarations, as a background page's window holds them", () => {
+    const { declarations } = scan("var a = 1, b; let c; const d = 2; function e() {} async function f() {} class G {} if (x) { var h; } const { i } = o; x = function j() {}; obj.k = function l() {};");
+    assert.deepEqual(declarations, ["a", "c", "d", "e", "f", "G"]);
+  });
+
   it("notices dynamic import()", () => {
     assert.equal(scan("import('./a.js')").dynamicImport, true);
     assert.equal(scan("loader.import('./a.js'); const s = 'import(x)';").dynamicImport, false);

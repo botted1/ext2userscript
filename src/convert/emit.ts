@@ -10,6 +10,18 @@
 import type { PageKind, RuntimeConfig } from "../runtime/config.ts";
 import type { BackgroundBundle, ContentCode } from "./bundle.ts";
 
+/**
+ * A background page's code with a function that hands its top-level declarations to the runtime, live (getters and
+ * setters), as its window's properties, for getBackgroundPage. It goes first, so it exists even if the code throws, but
+ * after a "use strict" directive, which must stay first.
+ */
+function withExports(background: BackgroundBundle): string {
+  if (!background.exports?.length) return background.code;
+  const members = background.exports.map((name) => `get ${name}() { return ${name}; }, set ${name}(value) { ${name} = value; }`);
+  const directive = /^\s*(["'])use strict\1;?/.exec(background.code)?.[0] ?? "";
+  return `${directive}\n__x2uImportMeta.exports = () => ({ ${members.join(", ")} });\n${background.code.slice(directive.length)}`;
+}
+
 const factory = (code: string) => `function (chrome, browser, fetch, XMLHttpRequest) {\nreturn function () {\n${code}\n};\n}`;
 
 export function emit(
@@ -28,7 +40,7 @@ export function emit(
   });
   const files = Object.entries(injectables).map(([path, text]) => `${JSON.stringify(path)}: ${factory(text)}`);
   const backgroundFactory = background
-    ? `function (chrome, browser, self, globalThis, window, document, importScripts, localStorage, fetch, XMLHttpRequest, __x2uImportMeta) {\nreturn function () {\n${background.code}\n};\n}`
+    ? `function (chrome, browser, self, globalThis, window, document, importScripts, localStorage, fetch, XMLHttpRequest, __x2uImportMeta) {\nreturn function () {\n${withExports(background)}\n};\n}`
     : "null";
   const pageFactories = Object.entries(pages).map(
     ([kind, text]) =>

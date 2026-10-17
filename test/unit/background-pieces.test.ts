@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createLogger } from "../../src/runtime/chrome.ts";
 import { createGm } from "../../src/runtime/gm.ts";
-import { createBackgroundGlobal } from "../../src/runtime/global.ts";
+import { createBackgroundGlobal, proxyGlobal } from "../../src/runtime/global.ts";
 import { tabIdentity } from "../../src/runtime/identity.ts";
 import { checkLifecycle } from "../../src/runtime/lifecycle.ts";
 import { createLocalStorage } from "../../src/runtime/local-storage.ts";
@@ -117,7 +117,38 @@ describe("createLocalStorage", () => {
   });
 });
 
+describe("proxyGlobal", () => {
+  it("keeps what code adds to a page's window where bare names find it, and the window's own properties on the window", () => {
+    const frame: Record<string, unknown> = { name: "frame", onload: null };
+    const userscript: Record<string, unknown> = {};
+    const global = proxyGlobal(frame, { chrome: "c" }, ["window"], userscript) as unknown as Record<string, unknown>;
+    global.$ = "jq";
+    global.onload = "handler";
+    assert.deepEqual([userscript.$, frame.$, global.$, frame.onload, global.window === global, global.chrome, "$" in global], ["jq", undefined, "jq", "handler", true, "c", true]);
+    delete global.$;
+    assert.equal("$" in userscript, false);
+  });
+});
+
 describe("createBackgroundGlobal", () => {
+  it("answers for the background's top-level declarations, as a background page's window does", () => {
+    let count = 1;
+    const { global, expose } = createBackgroundGlobal({});
+    expose({
+      get count() {
+        return count;
+      },
+      set count(value: number) {
+        count = value;
+      },
+    });
+    const page = global as unknown as Record<string, number>;
+    assert.equal(page.count, 1);
+    count = 2;
+    page.count += 1;
+    assert.equal(count, 3);
+  });
+
   it("adds the background's members and makes self and globalThis point to itself", () => {
     const { global } = createBackgroundGlobal({ chrome: "the chrome object" });
     const g = global as unknown as Record<string, unknown>;

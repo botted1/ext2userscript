@@ -119,14 +119,25 @@ async function bundlePage(kind: PageKind, path: string, html: string, files: Ext
   const top = parseHtml(html);
   const element = (nodes: HtmlNode[], name: string) => nodes.find((node): node is Extract<HtmlNode, { type: "element" }> => node.type === "element" && node.name === name);
   const root = element(top, "html");
-  const inside = root ? root.children : top;
+  // What is outside <head> and <body> (or the page has neither, or it comes after </body> or </html>) goes where a
+  // browser puts it: head-only elements and blank text before the body into the head, anything else into the body.
+  const inside = root ? [...root.children, ...top.filter((node) => node !== root)] : top;
   const head = element(inside, "head");
   const body = element(inside, "body");
-  // Without <head> or <body>, head-only elements before the first other element go to the head, the rest to the body.
-  const rest = inside.filter((node) => node !== head && node !== body);
-  const firstBody = rest.findIndex((node) => node.type === "element" ? !HEAD.has(node.name) : node.text.trim() !== "");
-  const headNodes = head ? head.children : rest.slice(0, firstBody === -1 ? rest.length : firstBody);
-  const bodyNodes = body ? body.children : firstBody === -1 ? [] : rest.slice(firstBody);
+  const headNodes: HtmlNode[] = [];
+  const bodyNodes: HtmlNode[] = [];
+  let inBody = false;
+  for (const node of inside) {
+    if (node === head) headNodes.push(...head.children);
+    else if (node === body) {
+      bodyNodes.push(...body.children);
+      inBody = true;
+    } else if (!inBody && (node.type === "element" ? HEAD.has(node.name) : node.text.trim() === "")) headNodes.push(node);
+    else {
+      bodyNodes.push(node);
+      inBody = true;
+    }
+  }
   const title = headNodes.find((node): node is Extract<HtmlNode, { type: "element" }> => node.type === "element" && node.name === "title");
   const config: PageConfig = {
     path,

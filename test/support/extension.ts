@@ -292,8 +292,19 @@ export function pagesExtension(origin: string): ExtensionFiles {
     chrome.action.openPopup().then(() => sendResponse("opened"), (error) => sendResponse(error.message));
     return true;
   }
+  // Answered a second later, by when a popup closed at once has gone.
+  if (message.from === "slow") {
+    setTimeout(() => sendResponse("late"), 1000);
+    return true;
+  }
+  if (message === "late ports?") sendResponse(latePorts);
 });
+let latePorts = 0;
 chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "late") {
+    latePorts++;
+    port.onDisconnect.addListener(() => latePorts--);
+  }
   if (port.name !== "popup") return;
   port.onDisconnect.addListener(() => chrome.tabs.query({ active: true }).then(([tab]) => chrome.tabs.sendMessage(tab.id, { popupClosed: true })));
 });`,
@@ -307,14 +318,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 html.dataset.content = "ready";
 document.addEventListener("x2u-ask-pages", () => chrome.runtime.sendMessage("who is open?").then((reply) => (html.dataset.pagesReply = String(reply))));
-document.addEventListener("x2u-open-popup", () => chrome.runtime.sendMessage("open popup").then((reply) => (html.dataset.openPopup = reply)));`,
+document.addEventListener("x2u-open-popup", () => chrome.runtime.sendMessage("open popup").then((reply) => (html.dataset.openPopup = reply)));
+document.addEventListener("x2u-ask-late", () => chrome.runtime.sendMessage("late ports?").then((count) => (html.dataset.latePorts = String(count))));`,
     "popup/popup.html": `<!doctype html><html><head><meta charset="utf-8"><title>Pop</title><link rel="stylesheet" href="popup.css"></head>
 <body><h1 id="title" style="color: rgb(7, 8, 9)">Pages</h1><img id="logo" src="../icon.png"><button id="options">Options</button>
+<input id="field" autofocus><a id="jump" href="#end">jump</a><p id="end">end</p>
 <svg id="icon" viewBox="0 0 10 10" width="20" height="20"><circle id="dot" cx="5" cy="5" r="5"/><use xlink:href="#dot"/></svg>
 <script src="lib.js"></script><script src="popup.js"></script><script src="broken.js"></script></body></html>`,
     "popup/broken.js": "throw new Error('a broken script');",
     "popup/popup.css": "body { width: 240px; margin: 0; background: url(../icon.png); } h1 { font-size: 20px; }",
-    "popup/lib.js": "var shared = 'lib' // no trailing newline",
+    "popup/lib.js": "var shared = 'lib'; window.$lib = function () { return 'lib api'; } // no trailing newline",
     "popup/popup.js": `const body = document.body;
 body.dataset.shared = shared;
 document.addEventListener("DOMContentLoaded", () => (body.dataset.loaded = "1"));
@@ -339,7 +352,17 @@ body.append(sink);
 try { sink.innerHTML = "<b>ok</b>"; body.dataset.sink = sink.firstChild.nodeName; } catch (error) { body.dataset.sink = "threw: " + error.message; }
 try { body.dataset.parsed = new DOMParser().parseFromString("<i>x</i>", "text/html").body.firstChild.nodeName; } catch (error) { body.dataset.parsed = "threw"; }
 try { sink.insertAdjacentHTML("beforeend", "<u>y</u>"); body.dataset.adjacent = sink.lastChild.nodeName; } catch (error) { body.dataset.adjacent = "threw"; }
-try { sink.innerHTML = '<img src="data:," onerror="document.body.dataset.inline = 1">'; } catch {}`,
+try { sink.innerHTML = '<img src="data:," onerror="document.body.dataset.inline = 1">'; } catch {}
+try { history.pushState(null, "", "#/route"); body.dataset.route = location.hash; } catch (error) { body.dataset.route = "threw: " + error.name; }
+// Set up after the background answers, a second later: a popup closed at once must not keep these.
+chrome.runtime.sendMessage({ from: "slow" }).then(() => {
+  chrome.runtime.connect({ name: "late" });
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message === "who is open?") sendResponse("zombie");
+  });
+});
+// What lib.js put on window, by its bare name, as the next script of a page finds it.
+body.dataset.libApi = $lib();`,
     "options.html": `<!doctype html><title>Options</title><p id="seen"></p><script type="module" src="options.js"></script>`,
     "options.js": `import { label } from "./label.js";
 document.getElementById("seen").textContent = label(localStorage.getItem("seen"));

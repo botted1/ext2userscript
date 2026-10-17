@@ -24,6 +24,11 @@ describe("scan: importScripts", () => {
 });
 
 describe("bundleBackground", () => {
+  it("lists a background page's top-level declarations, for getBackgroundPage", async () => {
+    const { model, files: all } = extension({ manifest_version: 2, background: { scripts: ["a.js", "b.js"] } }, { "a.js": "var settings = {};", "b.js": "function save() {}" });
+    assert.deepEqual((await bundleBackground(model, all)).background?.exports, ["settings", "save"]);
+  });
+
   it("inlines importScripts in a classic service worker, resolving URLs against the worker, recursively", async () => {
     const { model, files: all } = extension({ background: { service_worker: "bg/sw.js" } }, {
       "bg/sw.js": 'importScripts("lib/a.js");\nconsole.log(a, b);',
@@ -64,7 +69,7 @@ describe("bundleBackground", () => {
   it("concatenates MV2 background scripts and a background page's scripts in order", async () => {
     const scripts = extension({ manifest_version: 2, background: { scripts: ["a.js", "b.js"] } }, { "a.js": "var x = 1 // no newline", "b.js": "x++;" });
     const fromScripts = await bundleBackground(scripts.model, scripts.files);
-    assert.deepEqual(fromScripts.background, { code: "var x = 1 // no newline\n;\nx++;", worker: false, entry: "a.js" });
+    assert.deepEqual(fromScripts.background, { code: "var x = 1 // no newline\n;\nx++;", worker: false, entry: "a.js", exports: ["x"] });
 
     const page = extension({ manifest_version: 2, background: { page: "bg/page.html" } }, {
       "bg/page.html": '<html><head><script src="one.js"></script><script src=\'/two.js\'></script><script>inline()</script><script src="https://cdn.test/x.js"></script></head></html>',
@@ -72,7 +77,7 @@ describe("bundleBackground", () => {
       "two.js": "var two = 2;",
     });
     const fromPage = await bundleBackground(page.model, page.files);
-    assert.deepEqual(fromPage.background, { code: "var one = 1;\n;\nvar two = 2;", worker: false, entry: "bg/page.html" });
+    assert.deepEqual(fromPage.background, { code: "var one = 1;\n;\nvar two = 2;", worker: false, entry: "bg/page.html", exports: ["one", "two"] });
     assert.deepEqual(fromPage.warnings, ["background.page loads https://cdn.test/x.js, which isn't in the extension, so it was left out"]);
   });
 

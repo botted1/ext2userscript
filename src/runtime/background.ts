@@ -166,7 +166,8 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
       XMLHttpRequest: globalThis.XMLHttpRequest,
     });
     const XMLHttpRequest = background.worker ? undefined : network.XMLHttpRequest;
-    const { global, fire } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage, fetch: network.fetch, XMLHttpRequest });
+    const { global, fire, expose } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage, fetch: network.fetch, XMLHttpRequest });
+    const meta: { url: string; exports?: () => object } = { url: self };
     try {
       code(
         chrome,
@@ -180,11 +181,14 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
         localStorage,
         network.fetch,
         XMLHttpRequest,
-        { url: self },
+        meta,
       )();
     } catch (error) {
       createLogger(`${config.name} background`).error(error);
     }
+    // A background page's top-level var and function declarations are its window's properties, which pages reach with
+    // getBackgroundPage().
+    if (meta.exports) expose(meta.exports());
     // A service worker gets install and activate when the extension is installed or updated, as in Chrome.
     if (background.worker && lifecycle.installed) {
       setTimeout(() => {

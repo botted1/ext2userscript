@@ -70,6 +70,20 @@ describe("analyze", () => {
     assert.ok(methods.has("notification"));
   });
 
+  it("reports storage that belongs to the site, and custom elements, which Violentmonkey can't define", () => {
+    const { entries } = analyze(
+      model({ background: { scripts: ["bg.js"] }, action: { default_popup: "p.html" } }),
+      [],
+      { scan: scan("indexedDB.open('x')"), bundle: { dynamicImportScripts: false, remoteImports: [] } },
+      [{ kind: "popup", scan: scan("sessionStorage.x; customElements.define('a-b', C)") }],
+    );
+    assert.deepEqual(entries.filter((entry) => !entry.subject.startsWith("manifest.")).map((entry) => [entry.subject, entry.status, entry.contexts]), [
+      ["indexedDB", "partial", ["background"]],
+      ["sessionStorage", "partial", ["popup"]],
+      ["customElements", "partial", ["popup"]],
+    ]);
+  });
+
   it("reports host permissions as supported, needing GM_xmlhttpRequest for the network shim", () => {
     const { entries, methods } = analyze(model({ content_scripts: [group], optional_host_permissions: ["https://api.test/*"] }), []);
     assert.deepEqual(entries.map((entry) => [entry.subject, entry.status, entry.contexts]), [["manifest.host_permissions", "supported", ["content"]]]);

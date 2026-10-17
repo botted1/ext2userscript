@@ -65,7 +65,11 @@ export function openModal(kind: PageKind, title: string, onClose: () => void): M
   const csp = doc.createElement("meta");
   csp.httpEquiv = "Content-Security-Policy";
   csp.content = "script-src 'none'; object-src 'none'";
-  doc.head.append(csp);
+  // An about:blank frame resolves URLs against the site's: an in-page link (#end) or pushState("#/route") would load the
+  // site in the frame. Against about:blank, a fragment stays in the page. (A site whose CSP limits base-uri refuses it.)
+  const base = doc.createElement("base");
+  base.href = "about:blank";
+  doc.head.append(csp, base);
   try {
     (win as unknown as { trustedTypes?: { createPolicy(name: string, rules: object): unknown } }).trustedTypes?.createPolicy("default", { createHTML: (html: string) => html });
   } catch {
@@ -141,8 +145,13 @@ export async function buildPage(doc: Document, page: PageConfig, deps: { gm: Gm;
   for (const css of page.css) await deps.gm.addElement(doc.head, "style", { textContent: deps.assets.css(css) });
 }
 
-/** Fires what a loaded page gets, once its code has run: DOMContentLoaded on the document, then load on the window. */
+/**
+ * Fires what a loaded page gets, once its code has run: DOMContentLoaded on the document, then load on the window. The
+ * page takes the focus, on its autofocus field if it has one, as a Chrome popup does, so typing goes to it, not the site.
+ */
 export function finishLoading(win: Window & typeof globalThis, doc: Document): void {
   doc.dispatchEvent(new win.Event("DOMContentLoaded", { bubbles: true }));
+  win.focus();
+  doc.querySelector<HTMLElement>("[autofocus]")?.focus();
   setTimeout(() => win.dispatchEvent(new win.Event("load")));
 }

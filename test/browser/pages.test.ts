@@ -105,6 +105,16 @@ for (const backend of backends) {
       await frameAttr(popup, "body", "data-badge", "7");
       await frameAttr(popup, "body", "data-background-page", "object");
       await frameAttr(popup, "body", "data-top", "true");
+      // What one script put on window, the next finds by its bare name.
+      await frameAttr(popup, "body", "data-lib-api", "lib api");
+      // The page has the focus, on its autofocus field, as a Chrome popup does.
+      assert.equal(await popup.evaluate(() => document.activeElement?.id), "field");
+      assert.equal(await tab.evaluate(() => document.activeElement?.tagName), "DIV");
+      // Its URLs don't resolve against the site's: a fragment stays in the page, and so does pushState with one.
+      await frameAttr(popup, "body", "data-route", "#/route");
+      await popup.locator("#jump").click();
+      await sleep(300);
+      assert.equal(await popup.locator("#title").count(), 1, "following an in-page link must not load the site in the page's frame");
       // A content script's message reaches the open popup.
       await tab.evaluate(() => document.dispatchEvent(new Event("x2u-ask-pages")));
       await waitForAttr(tab, "data-pages-reply", "popup, asked by a tab");
@@ -115,6 +125,25 @@ for (const backend of backends) {
       await waitForAttr(tab, "data-popup-closed", "1");
       await tab.evaluate(() => document.dispatchEvent(new Event("x2u-ask-pages")));
       await waitForAttr(tab, "data-pages-reply", "undefined");
+      await tab.close();
+    });
+
+    it("forgets the listeners and ports a page sets up after it has closed", async () => {
+      const tab = await open("/page.html");
+      await tab.keyboard.press("Alt+Shift+P");
+      const popup = await modalFrame(tab, "#title");
+      await tab.keyboard.press("Escape");
+      await until(() => popup.isDetached(), "the popup to close");
+      // The popup's slow message is answered a second after it was sent, when the popup has gone.
+      await sleep(2_000);
+      await tab.evaluate(() => document.dispatchEvent(new Event("x2u-ask-late")));
+      await waitForAttr(tab, "data-late-ports", "0");
+      // The popup opened again answers for itself, not the closed one's late listener.
+      await tab.keyboard.press("Alt+Shift+P");
+      const again = await modalFrame(tab, "#title");
+      await frameAttr(again, "body", "data-reply", "background saw popup/popup.html");
+      await tab.evaluate(() => document.dispatchEvent(new Event("x2u-ask-pages")));
+      await waitForAttr(tab, "data-pages-reply", "popup, asked by a tab");
       await tab.close();
     });
 
@@ -182,6 +211,8 @@ for (const backend of backends) {
       await until(() => popup.isDetached(), "the popup to close");
       await until(async () => (await options.locator("#seen").textContent()) === "seen:popup", "the options page to read localStorage");
       await frameAttr(options, "body", "data-meta", /^chrome-extension:\/\/[a-p]{32}\/options\.js$/);
+      // A page without an autofocus field has the focus too, so typing goes to it, not the site.
+      assert.equal(await tab.evaluate(() => document.activeElement?.tagName), "DIV");
       await tab.close();
     });
 

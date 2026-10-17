@@ -16,7 +16,8 @@ import type { ExtensionFiles } from "./unpack.ts";
 export type ContentCode = { world: World; code: string } | null;
 
 /** The background's code, whether it is a service worker (no window or document), and its entry file. */
-export type BackgroundBundle = { code: string; worker: boolean; entry: string };
+/** exports: a background page's top-level declarations, which getBackgroundPage hands out as its window's (spec §5.2). */
+export type BackgroundBundle = { code: string; worker: boolean; entry: string; exports?: string[] };
 
 /** One entry per content group: its concatenated JS, or null when it has none (a CSS-only group). */
 export function bundleContent(model: Model, files: ExtensionFiles): { code: ContentCode[]; warnings: string[] } {
@@ -110,7 +111,8 @@ export async function bundleBackground(model: Model, files: ExtensionFiles, esbu
     const code = background.module ? await module(background.entry) : inline(background.entry, dirname(background.entry), []);
     result = { code, worker: true, entry: background.entry };
   } else if (background?.kind === "scripts") {
-    result = { code: background.files.map((path) => text(path, "background.scripts")).join("\n;\n"), worker: false, entry: background.files[0] ?? "background.js" };
+    const code = background.files.map((path) => text(path, "background.scripts")).join("\n;\n");
+    result = { code, worker: false, entry: background.files[0] ?? "background.js", exports: scan(code).declarations };
   } else if (background?.kind === "page") {
     // An MV2 background page: its scripts run in page order. Its own HTML isn't created (a ceiling the report states).
     const html = text(background.html, "background.page");
@@ -125,7 +127,8 @@ export async function bundleBackground(model: Model, files: ExtensionFiles, esbu
       const path = joinPath(src.startsWith("/") ? "" : dirname(background.html), src);
       parts.push(attribute(match[1], "type") === "module" ? await module(path) : text(path, "background.page"));
     }
-    result = { code: parts.join("\n;\n"), worker: false, entry: background.html };
+    const code = parts.join("\n;\n");
+    result = { code, worker: false, entry: background.html, exports: scan(code).declarations };
   }
   return { background: result, warnings, dynamicImportScripts, remoteImports };
 }

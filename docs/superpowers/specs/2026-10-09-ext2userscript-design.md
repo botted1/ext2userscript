@@ -131,7 +131,7 @@ Every context is wrapped in one function whose parameters shadow the globals the
 - Background: `self`, `globalThis`, `window`, `document` and `importScripts`. `self` and `globalThis` are a background global shim. In a service worker, `window` and `document` are `undefined`, as in Chrome; in an MV2 background page, `window` is the shim and `document` is the tab's document.
 - Background, content scripts, popup and options: `fetch` and `XMLHttpRequest`, the network shim (§5.2). A service worker gets `XMLHttpRequest` undefined, as in Chrome.
 - Popup and options (§6):
-  - `window`, `self` and `globalThis`: a proxy over the UI iframe's window, with `chrome`, `browser`, `localStorage`, `fetch`, `XMLHttpRequest` and `close()` (which closes the page) on top;
+  - `window`, `self` and `globalThis`: a proxy over the UI iframe's window, with `chrome`, `browser`, `localStorage`, `fetch`, `XMLHttpRequest` and `close()` (which closes the page) on top. What code adds to it that the window doesn't have (`window.$ = jQuery`) goes to the userscript's global, where a later script's bare names find it;
   - `document`, `location` and `history`: the iframe's own;
   - `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval`: the iframe's, so the page's timers stop when it closes;
   - `DOMParser`: the iframe's, so Trusted Types sees the frame's policy (§6).
@@ -232,6 +232,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
   - The background and the pages in a tab share one copy.
   - Content scripts keep the page's real `localStorage`, as in a real extension.
   - The background's and the pages' `window` proxies (§3.3) answer `window.localStorage` with the shim too.
+  - Ceiling: `indexedDB` and `sessionStorage` in the background and the pages are the site's own: what the extension keeps there stays on each site, where the site can read it. The report marks them partial.
 - **CI:** the emulator (§10.2) provides exactly the `GM_*` functions in the grant table, so CI runs the real `gm.ts`.
 
 **Revision (S1):** `document_start` is best-effort. Tampermonkey 5.5.1 and Violentmonkey 2.49.0 start a `document-start` userscript 16–46 ms after navigation start, whatever `@sandbox`, `@inject-into` or `@grant` say (measured with default manager settings, unpacked builds, on one machine against local pages). A page script that runs earlier wins. The "call before the first `await`" rule still holds and still matters: it keeps `gm.addElement` synchronous, so a page-world script runs at the userscript's own start time. The release-tier conformance test pins this weaker contract: the injection must beat a page script that runs at least 200 ms after navigation start.
@@ -259,7 +260,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 | `i18n.getMessage` / `getUILanguage` / `detectLanguage` | supported / supported / unsupported | |
 | `permissions.contains` / `getAll` / `request` / `remove` | partial | Answers come from the manifest. `request` resolves true, and removals persist in GM storage. |
 | `cookies.*` | partial | `gm.cookie`, which needs `caps.cookies` (TM, and VM since 2.35.1; VM returns httpOnly cookies only when the user enables that). Where it's missing, the calls reject (§5.1). |
-| `extension.getBackgroundPage`, `runtime.getBackgroundPage` | partial | Works only when the current tab is the leader; otherwise rejects |
+| `extension.getBackgroundPage`, `runtime.getBackgroundPage` | partial | Works only when the current tab is the leader; otherwise rejects. A background page's top-level `var`, `let`, `const`, `function` and `class` declarations are properties of the global it hands out, live, as a background page's window holds them (ceiling: the first name of each `var`/`let`/`const`, and no destructuring) |
 | `extension.getViews` | partial | Returns no views: each extension page opens in a tab's modal of its own |
 | In a popup or options page: `alarms`, `contextMenus` / `menus`, the toolbar button, `commands`, `notifications`, `permissions` | partial | Their methods run in the leader's background, where their state lives; their events fire there only |
 | `webRequest`, `declarativeNetRequest`, `proxy`, `identity`, `offscreen`, `sidePanel`, `devtools`, `debugger`, `tabCapture`, `downloads` | unsupported | Reject with `Error("ext2userscript: chrome.X is not available in userscripts")`, logged once |
@@ -317,6 +318,7 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
   - The popup sits at the top right. The options page is centred, with a title bar, a close button and a backdrop.
   - Escape, a click outside, the close button or `window.close()` closes it, after `pagehide` and `unload` are dispatched to the iframe's window. The listeners the page added are removed and its ports disconnected, so the background sees it go.
   - One page per tab: opening the open one focuses it; opening the other replaces it.
+  - The page takes the focus once it has loaded, on its autofocus field if it has one, so typing goes to it, not the site.
 - **Filling the iframe:**
   - The page's HTML is parsed at build time, by a hand-written parser (`src/convert/html.ts`). Its ceiling: of HTML's implied end tags, only a new `li`, `option`, `p`, `dt`/`dd` or table cell or row closes an open one of its kind; misnested tags otherwise come out as written, and unknown named character references stay as written.
   - The runtime builds the body and head nodes in the iframe document with `createElement`, `setAttribute` and `append` (see the revision below). A `style` attribute is set through the CSSOM, which a site's CSP doesn't block.
@@ -326,7 +328,8 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 - **Scripts:** the page's scripts are not inserted as `<script>` elements. The bundled UI code runs inside the userscript, with its wrapper parameters bound to the iframe's `window`/`document`, and the page's CSP doesn't apply to it. `DOMContentLoaded` and `load` are dispatched to the iframe's window after insertion.
 - **Size:** the popup modal sizes itself to the content (max 800×600). The options page opens as a larger modal.
 - **Known ceiling:** sites whose CSP blocks `blob:` or `data:` in `img-src`/`font-src` may still lose images and fonts in the modal. The report adds a warning when the UI uses them: "<page>: its images and fonts may not show under Tampermonkey on sites whose CSP limits img-src or font-src". Spike S2 measured this on GitHub, YouTube and X and saw no asset failures, even where `font-src` omits `blob:` (GitHub, X) or `data:` (GitHub). The popup plan measured it on a local page with `img-src 'self'`: Tampermonkey didn't load the modal's `blob:` images, and Violentmonkey did.
-- **Ceiling:** a link or a `location` change to another extension page leaves the page (the iframe navigates away from it).
+- **Ceiling:** a link or a `location` change to another extension page leaves the page (the iframe navigates away from it). The frame's base URL is `about:blank`, so a fragment link and `pushState` with a fragment stay in the page, and relative URLs don't resolve against the site's (unless the site's CSP limits `base-uri`, which refuses that base).
+- **Custom elements:** measured, Violentmonkey 2.49.0 runs userscripts where `customElements` is `null`, so a page can't define custom elements there; Tampermonkey 5.5.1 allows them. The report marks `customElements` partial.
 
 **Revision (S2):** On a site that sends `require-trusted-types-for 'script'` (YouTube), Tampermonkey 5.5.1 throws on `innerHTML` (on the iframe's body) and on `DOMParser.parseFromString`; Violentmonkey 2.49.0 allows both. The cause wasn't investigated.
 - The converter parses popup and options HTML at build time, and the runtime builds the iframe DOM with `createElement`, `setAttribute` and `append`, with no `DOMParser` step. Cost: the parse runs in Node (the CLI) and in the web app's Web Worker (§8), and neither has `DOMParser`, so it needs an HTML-parser dependency (§2 has none yet) or a small hand-written parser with a stated ceiling. The popup plan chooses.

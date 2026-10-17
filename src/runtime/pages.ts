@@ -5,7 +5,7 @@
 // - alarms, menus, the toolbar button, commands, notifications and permissions keep their state in the leader's
 //   background, so a page's calls go there (messaging's "call" event); their events don't fire in the page.
 import type { Assets } from "./assets.ts";
-import { createEvent, method, platformInfo, readLastError, RUNTIME_ENUMS, withFallback, type Logger } from "./chrome.ts";
+import { createEvent, createLogger, method, platformInfo, readLastError, RUNTIME_ENUMS, withFallback, type Logger } from "./chrome.ts";
 import { createCookies } from "./cookies.ts";
 import type { PageCode, PageKind, RuntimeConfig } from "./config.ts";
 import type { Gm } from "./gm.ts";
@@ -48,15 +48,9 @@ export function createPages(deps: PagesDeps) {
     await opening;
     if (current?.kind === kind) return current.modal.win.focus();
     current?.modal.close();
-    const cleanups: Array<() => void> = [];
+    const scope = createPageScope(log);
     const modal = openModal(kind, config.name, () => {
-      for (const cleanup of cleanups.splice(0)) {
-        try {
-          cleanup();
-        } catch (error) {
-          log.error(error);
-        }
-      }
+      scope.close();
       if (current?.modal === modal) {
         current = undefined;
         deps.changed(undefined);
@@ -68,6 +62,8 @@ export function createPages(deps: PagesDeps) {
       const url = `chrome-extension://${config.id}/${page.path}`;
       const localStorage = await deps.localStorage();
       await buildPage(modal.doc, page, { gm: deps.gm, assets: deps.assets });
+      // Closed while it was being built: its code never runs.
+      if (scope.closed) return;
       const network = createNetwork({
         gm: deps.gm,
         asset: deps.assets.file,
@@ -80,10 +76,10 @@ export function createPages(deps: PagesDeps) {
         fetch: globalThis.fetch.bind(globalThis),
         XMLHttpRequest: globalThis.XMLHttpRequest,
       });
-      const chrome = scopeToPage(pageChrome(deps, open), cleanups);
+      const chrome = scopeToPage(pageChrome(deps, open), scope);
       const global = proxyGlobal(modal.win, { chrome, browser: chrome, localStorage, fetch: network.fetch, XMLHttpRequest: network.XMLHttpRequest, close: () => modal.close(), frameElement: null, opener: null }, [
         "window", "self", "globalThis", "top", "parent", "frames",
-      ]);
+      ], globalThis);
       const code = deps.code[kind];
       try {
         code?.(chrome, chrome, global, global, global, modal.doc, modal.win.location, modal.win.history, localStorage, network.fetch, network.XMLHttpRequest, global.setTimeout, global.setInterval, global.clearTimeout, global.clearInterval, modal.win.DOMParser, `chrome-extension://${config.id}/`)();
@@ -199,11 +195,41 @@ function inBackground(namespace: string, messaging: Messaging, log: Logger): obj
   });
 }
 
+export type PageScope = {
+  /** Runs when the page closes, or at once if it already has. */
+  add(cleanup: () => void): void;
+  readonly closed: boolean;
+};
+
+/** What one opening of a page set up, to take down when it closes. */
+export function createPageScope(log: Logger = createLogger("page")): PageScope & { close(): void } {
+  const cleanups: Array<() => void> = [];
+  let closed = false;
+  const run = (cleanup: () => void) => {
+    try {
+      cleanup();
+    } catch (error) {
+      log.error(error);
+    }
+  };
+  return {
+    add: (cleanup) => (closed ? run(cleanup) : void cleanups.push(cleanup)),
+    get closed() {
+      return closed;
+    },
+    close: () => {
+      closed = true;
+      for (const cleanup of cleanups.splice(0)) run(cleanup);
+    },
+  };
+}
+
 /**
  * The page's view of its chrome object: listeners it adds to events are removed, and ports it opens disconnected, when
- * it closes. Namespaces and events are wrapped once each, so they compare equal across reads.
+ * it closes; after that (a promise the page started settling late), a listener it adds is taken off at once and a port
+ * it opens disconnects at once. Namespaces and events are wrapped once each, so they compare equal across reads.
  */
-export function scopeToPage(chrome: object, cleanups: Array<() => void>): object {
+export function scopeToPage(chrome: object, scope: PageScope): object {
   const wrapped = new WeakMap<object, object>();
   // Own properties only: a namespace with fallbacks answers every name, addListener included.
   const isEvent = (value: object): value is { addListener(fn: unknown): void; removeListener(fn: unknown): void } =>
@@ -218,7 +244,7 @@ export function scopeToPage(chrome: object, cleanups: Array<() => void>): object
             if (property !== "addListener") return Reflect.get(target, property, receiver);
             return (listener: unknown) => {
               target.addListener(listener);
-              cleanups.push(() => target.removeListener(listener));
+              scope.add(() => target.removeListener(listener));
             };
           },
         })
@@ -228,7 +254,7 @@ export function scopeToPage(chrome: object, cleanups: Array<() => void>): object
             if (property === "connect" && typeof member === "function") {
               return (...args: unknown[]) => {
                 const port: unknown = member.apply(target, args);
-                if (isPort(port)) cleanups.push(() => port.disconnect());
+                if (isPort(port)) scope.add(() => port.disconnect());
                 return port;
               };
             }

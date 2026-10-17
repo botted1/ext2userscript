@@ -55,6 +55,14 @@ export function analyze(
     }
   };
 
+  /** Globals the site owns: an extension page's or background's own in Chrome, the site's here (spec §5.1, §6). */
+  const siteGlobals = (scan: ScanResult, context: Context) => {
+    for (const name of scan.globals) {
+      if (name === "customElements") add(name, "partial", "Violentmonkey runs userscripts where customElements is null, so custom elements can't be defined", context);
+      else add(name, "partial", "the site's own here: what the extension keeps in it stays on each site, where the site can read it", context);
+    }
+  };
+
   for (const scan of scans) {
     if (!scan) continue;
     chains(scan, "content");
@@ -62,6 +70,7 @@ export function analyze(
   }
   if (background) {
     chains(background.scan, "background");
+    siteGlobals(background.scan, "background");
     if (background.bundle.dynamicImportScripts) add("importScripts()", "partial", "importScripts with anything but string literals can't be inlined", "background");
     for (const url of background.bundle.remoteImports) add(`import ${url}`, "unsupported", "remote modules can't be bundled", "background");
   }
@@ -86,7 +95,10 @@ export function analyze(
   if (model.hostPermissions.length + model.optionalHostPermissions.length > 0) {
     use("manifest.host_permissions", { status: "supported", methods: ["xmlHttpRequest"] }, model.background ? "background" : "content");
   }
-  for (const page of pages) chains(page.scan, page.kind);
+  for (const page of pages) {
+    chains(page.scan, page.kind);
+    siteGlobals(page.scan, page.kind);
+  }
   // The pages open from menu commands (spec §6).
   const opened: Support = { status: "supported", methods: ["registerMenuCommand", "unregisterMenuCommand"] };
   if (model.popup) use(`manifest.${model.popup.key}.default_popup`, opened, "popup");

@@ -79,6 +79,18 @@ describe("bundlePages", () => {
     assert.deepEqual(assets, []);
   });
 
+  it("puts what lies outside <head> and <body> where a browser does", async () => {
+    const { model, files: all } = extension({ action: { default_popup: "p.html" } }, {
+      "p.html": `<html><head><title>T</title></head><script src="early.js"></script><body><p>x</p></body>\n<script src="late.js"></script></html><script src="after.js"></script>`,
+      "early.js": "early()", "late.js": "late()", "after.js": "after()",
+    });
+    const { pages, warnings } = await bundlePages(model, all);
+    const [{ config, code }] = pages;
+    assert.equal(code, "early()\n;\nlate()\n;\nafter()");
+    assert.deepEqual(config.body.filter((node) => typeof node !== "string"), [["p", [], ["x"]]]);
+    assert.deepEqual(warnings, []);
+  });
+
   it("leaves out a page whose file is missing, and a script or style sheet that isn't in the extension", async () => {
     const { model, files: all } = extension({ action: { default_popup: "gone.html" }, options_page: "o.html" }, {
       "o.html": `<link rel="stylesheet" href="x.css"><script src="https://cdn.example/lib.js"></script><p>o</p>`,

@@ -23,6 +23,13 @@ export type ScanResult = {
   importScripts: Array<{ start: number; end: number; urls?: string[]; nested: boolean }>;
   /** Top-level let, const and class declarations: where the keyword is, and a class's name. */
   lexical: Array<{ start: number; keyword: "let" | "const" | "class"; name?: string }>;
+  /**
+   * Names the code declares at top level (var, let, const, function, class), which a background page's window holds.
+   * ponytail: the first name of each var/let/const only, and no destructuring.
+   */
+  declarations: string[];
+  /** Globals that belong to the site where the extension's pages and background run (SITE_GLOBALS), in first-use order. */
+  globals: string[];
 };
 
 /** depth: how many braces (and template substitutions) are open where the token starts. */
@@ -33,12 +40,17 @@ const NAME_CHAR = /[\w$\u0080-￿]/;
 const BEFORE_EXPRESSION = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
 /** `window.chrome` and friends are the global chrome; `foo.chrome` is someone else's property. */
 const GLOBAL_OWNERS = new Set(["window", "globalThis", "self"]);
+/** Storage and custom elements: a userscript reaches the site's, not an extension page's own. */
+const SITE_GLOBALS = new Set(["indexedDB", "sessionStorage", "customElements"]);
 
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
-  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], dynamicImport: false, importScripts: [], lexical: [] };
+  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], dynamicImport: false, importScripts: [], lexical: [], declarations: [], globals: [] };
+  const declare = (name: string) => void (result.declarations.includes(name) || result.declarations.push(name));
   const isDot = (token: Token | undefined) => token?.kind === "punct" && (token.value === "." || token.value === "?.");
   let brackets = 0; // open ( and [
+  /** Whether the token at index starts a statement, as a declaration does: first, or after ; or }. */
+  const startsStatement = (index: number) => index === 0 || tokens[index - 1].value === ";" || tokens[index - 1].value === "}";
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token.kind === "punct" && (token.value === "(" || token.value === "[")) brackets++;
@@ -53,6 +65,15 @@ export function scan(code: string): ScanResult {
       } else if (token.value === "class" && next?.kind === "name" && (previous === undefined || previous === ";" || previous === "}")) {
         result.lexical.push({ start: token.start, keyword: "class", name: next.value });
       }
+      if ((token.value === "var" || token.value === "let" || token.value === "const" || token.value === "class") && next?.kind === "name" && (token.value !== "class" || startsStatement(i))) declare(next.value);
+      if (token.value === "function" && startsStatement(tokens[i - 1]?.value === "async" ? i - 1 : i)) {
+        const name = next?.value === "*" ? tokens[i + 2] : next;
+        if (name?.kind === "name") declare(name.value);
+      }
+    }
+    if (SITE_GLOBALS.has(token.value) && !result.globals.includes(token.value)) {
+      const owner = isDot(tokens[i - 1]) ? tokens[i - 2] : undefined;
+      if (isDot(tokens[i - 1]) ? owner?.kind === "name" && GLOBAL_OWNERS.has(owner.value) : true) result.globals.push(token.value);
     }
     if (token.value === "import" && tokens[i + 1]?.value === "(" && !isDot(tokens[i - 1])) result.dynamicImport = true;
     if (token.value === "getURL" && isDot(tokens[i - 1]) && tokens[i + 1]?.value === "(" && tokens[i + 2]?.kind === "string") {
