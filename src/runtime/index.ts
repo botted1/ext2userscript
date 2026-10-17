@@ -1,11 +1,11 @@
 // The runtime's entry point (spec §5). runtime-node.ts bundles this file to an IIFE named __x2uRuntime, and every
-// userscript calls __x2uRuntime.start(config, code, background) once per page.
+// userscript calls __x2uRuntime.start(config, code, background, injectables, pages) once per page.
 // Content scripts start at once, so document_start stays early; joining the other tabs (registry, bus, election) is
 // asynchronous, and messages sent before it finishes wait in the router.
 import { createAssets } from "./assets.ts";
 import { startBackground } from "./background.ts";
 import { createLogger, readLastError, withFallback } from "./chrome.ts";
-import type { BackgroundCode, GroupCode, InjectableCode, RuntimeConfig } from "./config.ts";
+import type { BackgroundCode, GroupCode, InjectableCode, PageCode, PageKind, RuntimeConfig } from "./config.ts";
 import { runContent, withGlobals } from "./content.ts";
 import { leaderOf, startElection } from "./elect.ts";
 import { createGm } from "./gm.ts";
@@ -13,7 +13,9 @@ import { createI18n } from "./i18n.ts";
 import { tabIdentity } from "./identity.ts";
 import { showMenus } from "./menus.ts";
 import { createMessaging } from "./messaging.ts";
-import { listenForCommands } from "./commands.ts";
+import { EXECUTE_ACTION, listenForCommands } from "./commands.ts";
+import { createLocalStorage } from "./local-storage.ts";
+import { createPages } from "./pages.ts";
 import { createNetwork } from "./net.ts";
 import { createInjector } from "./scripting.ts";
 import { startRegistry, type Registry, type TabInfo, type TabState } from "./registry.ts";
@@ -21,7 +23,13 @@ import { startBus } from "./bus.ts";
 import { createStorage } from "./storage.ts";
 import { createTabs } from "./tabs.ts";
 
-export function start(config: RuntimeConfig, code: readonly GroupCode[], background: BackgroundCode | null = null, injectables: InjectableCode = {}): void {
+export function start(
+  config: RuntimeConfig,
+  code: readonly GroupCode[],
+  background: BackgroundCode | null = null,
+  injectables: InjectableCode = {},
+  pageCode: Partial<Record<PageKind, PageCode>> = {},
+): void {
   const log = createLogger(config.name);
   try {
     const gm = createGm();
@@ -37,7 +45,11 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
     const storage = createStorage(gm, config.ns, log);
     let registry: Registry | undefined;
     let tabs: ReturnType<typeof createTabs> | undefined;
+    let pages: ReturnType<typeof createPages> | undefined;
     let leading = false;
+    // One copy of the extension's localStorage per tab, for its background and its pages.
+    let local: Promise<Storage> | undefined;
+    const localStorage = () => (local ??= createLocalStorage(gm, config.ns, log));
     let activeAt = document.visibilityState === "visible" ? Date.now() : 0;
     const state = (): TabState => ({
       url: location.href,
@@ -46,6 +58,7 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
       active: document.visibilityState === "visible",
       activeAt,
       status: document.readyState === "complete" ? "complete" : "loading",
+      ...(pages?.current() ? { page: pages.current() } : {}),
     });
 
     const messaging = createMessaging({
@@ -56,7 +69,12 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
       sender: (from) =>
         from === "background"
           ? { id: config.id, url: `chrome-extension://${config.id}/${config.background?.entry ?? ""}`, origin: `chrome-extension://${config.id}` }
-          : { id: config.id, url: location.href, origin: location.origin, frameId: frame ? 1 : 0, ...(tabs ? { tab: tabs.selfTab() } : {}) },
+          : from === "page"
+            ? { id: config.id, url: pages?.url(), origin: `chrome-extension://${config.id}` }
+            : { id: config.id, url: location.href, origin: location.origin, frameId: frame ? 1 : 0, ...(tabs ? { tab: tabs.selfTab() } : {}) },
+      // This tab's page (unless it is the sender), and every other tab's.
+      pages: (from) =>
+        registry ? [...(pages?.current() && from !== "page" ? [registry.me] : []), ...registry.live().flatMap((tab) => (tab.page ? [tab.id] : []))] : [],
       control: async (op, args) => {
         const injected = injector.run(op, args);
         if (injected) return injected;
@@ -67,7 +85,14 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
     // Without a background, a message for it fails at once instead of waiting for one to start.
     if (!background) messaging.setBackgroundReady(true);
     // The manifest's keyboard shortcuts, in every frame: a shortcut pressed before this page has joined waits for it.
-    else listenForCommands(window, config, messaging.emit, log);
+    // _execute_action opens the popup right here, when there is one.
+    else {
+      listenForCommands(window, config, (type, data) => {
+        if (!EXECUTE_ACTION.has((data as { name: string }).name) || !config.pages?.popup) return messaging.emit(type, data);
+        if (!frame) void pages?.open("popup");
+        return Promise.resolve();
+      }, log);
+    }
 
     const runtime = withFallback(log, "runtime", {
       id: config.id,
@@ -111,6 +136,24 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
       registry = joined;
       const pageTabs = createTabs({ gm, registry: joined, messaging, log, dispatching: () => leading });
       tabs = pageTabs;
+      let handle: { pause(): void; resume(): void; global: unknown } | undefined;
+      if (!frame && config.pages) {
+        pages = createPages({
+          config,
+          code: pageCode,
+          gm,
+          log,
+          assets,
+          i18n,
+          storage,
+          tabs: pageTabs.api,
+          messaging,
+          localStorage,
+          backgroundGlobal: () => (leading ? handle?.global : undefined),
+          // Other tabs learn at once which page is open here, so their messages reach it.
+          changed: () => void joined.touch(),
+        });
+      }
       const bus = await startBus(gm, config.ns, joined, messaging.handle);
       messaging.attach((to, wire) => bus.send(to, wire));
       joined.onRemoved((id) => messaging.peerGone(id));
@@ -136,10 +179,10 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
         if (event.persisted) void joined.rejoin();
       });
 
-      if (frame || !background) return;
-      // The background's context-menu items and toolbar button, as this tab's menu commands.
-      void showMenus({ gm, ns: config.ns, log, config, tabId: () => joined.me, emit: messaging.emit });
-      let handle: { pause(): void; resume(): void } | undefined;
+      if (frame || (!background && !config.pages)) return;
+      // The background's context-menu items and toolbar button, and the extension's pages, as this tab's menu commands.
+      void showMenus({ gm, ns: config.ns, log, config, tabId: () => joined.me, emit: messaging.emit, open: (kind) => void pages?.open(kind) });
+      if (!background) return;
       let starting = false;
       startElection(joined, {
         acquire: () => {
@@ -147,7 +190,7 @@ export function start(config: RuntimeConfig, code: readonly GroupCode[], backgro
           if (handle) return handle.resume();
           if (starting) return;
           starting = true;
-          startBackground({ config, code: background, gm, log, assets, i18n, storage, tabs: pageTabs.api, messaging }).then(
+          startBackground({ config, code: background, gm, log, assets, i18n, storage, tabs: pageTabs.api, messaging, localStorage }).then(
             (started) => {
               handle = started;
               if (!leading) started.pause();

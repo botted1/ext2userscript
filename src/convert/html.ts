@@ -2,6 +2,8 @@
 // the runtime builds the page's DOM from the tree with createElement, so no HTML string is parsed in the browser (where
 // Trusted Types can forbid it). Extension pages are short and usually made by bundlers, so this handles what they use:
 // elements and attributes, void elements, raw text in script and style, comments, a doctype, character references.
+// Names are lower-cased, as HTML does, except SVG's mixed-case ones (viewBox, foreignObject), which get their case back
+// as the browser's tree builder gives it them: SVG is case-sensitive.
 // Ceiling: of HTML's implied end tags, only a new li, option, p, dt/dd or table cell/row closing an open one of its
 // kind; misnested tags and other implied structure come out as written.
 
@@ -38,6 +40,23 @@ export function decodeEntities(text: string): string {
   });
 }
 
+/** SVG's mixed-case names, by their lower-case form (the HTML standard's "adjust SVG" tables). */
+const mixedCase = (names: string) => new Map(names.split(" ").map((name) => [name.toLowerCase(), name]));
+const SVG_TAGS = mixedCase(
+  "altGlyph altGlyphDef altGlyphItem animateColor animateMotion animateTransform clipPath feBlend feColorMatrix feComponentTransfer " +
+    "feComposite feConvolveMatrix feDiffuseLighting feDisplacementMap feDistantLight feDropShadow feFlood feFuncA feFuncB feFuncG " +
+    "feFuncR feGaussianBlur feImage feMerge feMergeNode feMorphology feOffset fePointLight feSpecularLighting feSpotLight feTile " +
+    "feTurbulence foreignObject glyphRef linearGradient radialGradient textPath",
+);
+const SVG_ATTRIBUTES = mixedCase(
+  "attributeName attributeType baseFrequency baseProfile calcMode clipPathUnits diffuseConstant edgeMode filterUnits glyphRef " +
+    "gradientTransform gradientUnits kernelMatrix kernelUnitLength keyPoints keySplines keyTimes lengthAdjust limitingConeAngle " +
+    "markerHeight markerUnits markerWidth maskContentUnits maskUnits numOctaves pathLength patternContentUnits patternTransform " +
+    "patternUnits pointsAtX pointsAtY pointsAtZ preserveAlpha preserveAspectRatio primitiveUnits refX refY repeatCount repeatDur " +
+    "requiredExtensions requiredFeatures specularConstant specularExponent spreadMethod startOffset stdDeviation stitchTiles " +
+    "surfaceScale systemLanguage tableValues targetX targetY textLength viewBox viewTarget xChannelSelector yChannelSelector zoomAndPan",
+);
+
 const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 function attributes(source: string): HtmlAttribute[] {
@@ -54,6 +73,14 @@ export function parseHtml(html: string): HtmlNode[] {
   const root: HtmlNode[] = [];
   const open: Array<Extract<HtmlNode, { type: "element" }>> = [];
   const into = () => (open.length > 0 ? open[open.length - 1].children : root);
+  /** Inside an <svg>, but not in a foreignObject's HTML. */
+  const inSvg = () => {
+    for (let i = open.length - 1; i >= 0; i--) {
+      if (open[i].name === "foreignObject") return false;
+      if (open[i].name === "svg") return true;
+    }
+    return false;
+  };
   const text = (value: string) => {
     if (!value) return;
     const nodes = into();
@@ -90,7 +117,7 @@ export function parseHtml(html: string): HtmlNode[] {
     const name = tag[2].toLowerCase();
     if (tag[1]) {
       // An end tag closes the nearest open element of its name, and anything opened inside it; a stray one is ignored.
-      const at = open.map((element) => element.name).lastIndexOf(name);
+      const at = open.map((element) => element.name.toLowerCase()).lastIndexOf(name);
       if (at !== -1) open.length = at;
       continue;
     }
@@ -98,6 +125,10 @@ export function parseHtml(html: string): HtmlNode[] {
     if (closes && open.length > 0 && closes.includes(open[open.length - 1].name)) open.pop();
     const selfClosing = /\/\s*$/.test(tag[3]);
     const element: Extract<HtmlNode, { type: "element" }> = { type: "element", name, attributes: attributes(tag[3].replace(/\/\s*$/, "")), children: [] };
+    if (name === "svg" || inSvg()) {
+      element.name = SVG_TAGS.get(name) ?? name;
+      element.attributes = element.attributes.map(([key, value]) => [SVG_ATTRIBUTES.get(key) ?? key, value]);
+    }
     into().push(element);
     if (RAW.has(name)) {
       const end = html.toLowerCase().indexOf(`</${name}`, i);

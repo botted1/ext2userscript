@@ -9,11 +9,7 @@ const WORKER_EVENTS = new Set(["install", "activate", "message", "fetch", "push"
 type Listener = ((event: unknown) => void) | { handleEvent(event: unknown): void };
 
 export function createBackgroundGlobal(own: Record<string, unknown>) {
-  const real = globalThis as unknown as Record<PropertyKey, unknown>;
   const listeners = new Map<string, Set<Listener>>();
-  const bound = new Map<Function, Function>();
-  /** Functions background code put on the global (self.moment = factory()): handed back as they are, static members and all. */
-  const assigned = new WeakSet<Function>();
   const members: Record<string, unknown> = {
     ...own,
     // self.onmessage and the like stay here: on the tab's real global, the page could post into the background's handler.
@@ -30,9 +26,38 @@ export function createBackgroundGlobal(own: Record<string, unknown>) {
     skipWaiting: async () => {},
     clients: { claim: async () => {}, matchAll: async () => [], get: async () => undefined, openWindow: async () => null },
   };
+  const global = proxyGlobal(globalThis, members, ["self", "globalThis"]);
+
+  return {
+    global,
+    /** Fires a service-worker lifecycle event at the listeners background code added on self. */
+    fire(type: "install" | "activate") {
+      const event = { type, waitUntil: () => {} };
+      const handler = members[`on${type}`];
+      for (const listener of [...(listeners.get(type) ?? []), ...(typeof handler === "function" ? [handler as Listener] : [])]) {
+        try {
+          if (typeof listener === "function") listener(event);
+          else listener.handleEvent(event);
+        } catch (error) {
+          console.error(error);
+        }
+      }
+    },
+  };
+}
+
+/**
+ * A global object over a real one (the userscript's, or a page iframe's window): members first, then the real global's
+ * properties, with its native methods bound to it. The names in `itself` answer the proxy.
+ */
+export function proxyGlobal(target: object, members: Record<string, unknown>, itself: readonly string[]): typeof globalThis {
+  const real = target as Record<PropertyKey, unknown>;
+  const bound = new Map<Function, Function>();
+  /** Functions code put on the global (self.moment = factory()): handed back as they are, static members and all. */
+  const assigned = new WeakSet<Function>();
   const global: typeof globalThis = new Proxy(Object.create(null) as object, {
     get(_target, property) {
-      if (property === "self" || property === "globalThis") return global;
+      if (typeof property === "string" && itself.includes(property)) return global;
       if (typeof property === "string" && property in members) return members[property];
       const value = real[property];
       // A native method needs the real global as `this`: self.setTimeout(...) would otherwise throw "Illegal invocation".
@@ -51,21 +76,5 @@ export function createBackgroundGlobal(own: Record<string, unknown>) {
     has: (_target, property) => (typeof property === "string" && property in members) || property in real,
     deleteProperty: (_target, property) => delete real[property],
   }) as typeof globalThis;
-
-  return {
-    global,
-    /** Fires a service-worker lifecycle event at the listeners background code added on self. */
-    fire(type: "install" | "activate") {
-      const event = { type, waitUntil: () => {} };
-      const handler = members[`on${type}`];
-      for (const listener of [...(listeners.get(type) ?? []), ...(typeof handler === "function" ? [handler as Listener] : [])]) {
-        try {
-          if (typeof listener === "function") listener(event);
-          else listener.handleEvent(event);
-        } catch (error) {
-          console.error(error);
-        }
-      }
-    },
-  };
+  return global;
 }

@@ -7,7 +7,7 @@
 // fields aren't shown, as there is nothing to click them on; onClicked gets the page's URL and any selected text, but no
 // link or media details; the button's badge shows in its caption, and its icon and colours don't show at all.
 import { callWithLastError, createEvent, method, type Logger } from "./chrome.ts";
-import type { RuntimeConfig } from "./config.ts";
+import type { PageKind, RuntimeConfig } from "./config.ts";
 import type { Gm } from "./gm.ts";
 import { keys } from "./keys.ts";
 import { urlMatches } from "./match.ts";
@@ -199,11 +199,21 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
 }
 
 /**
- * Keeps this page's menu commands in step with the background's menu state: one for the toolbar button (when it has no
- * popup and is enabled) and one per context-menu item this page can show. emit tells the background about a click.
- * Top frames only: a manager shows one menu per tab.
+ * Keeps this page's menu commands in step with the background's menu state: one for the toolbar button when it is
+ * enabled ("Open <title>" when it has a popup), one for the options page, and one per context-menu item this page can
+ * show. emit tells the background about a click; open opens a page here. Top frames only: a manager shows one menu per
+ * tab.
  */
-export async function showMenus(deps: { gm: Gm; ns: string; log: Logger; config: RuntimeConfig; tabId(): number | undefined; emit(type: string, data: unknown): Promise<unknown> }) {
+export async function showMenus(deps: {
+  gm: Gm;
+  ns: string;
+  log: Logger;
+  config: RuntimeConfig;
+  tabId(): number | undefined;
+  emit(type: string, data: unknown): Promise<unknown>;
+  /** Opens the popup or options page in this tab. */
+  open(kind: PageKind): void;
+}) {
   const { gm, log, config } = deps;
   const key = keys(deps.ns).menus;
   let registered: Array<number | string> = [];
@@ -214,10 +224,14 @@ export async function showMenus(deps: { gm: Gm; ns: string; log: Logger; config:
     const shared = state?.action ?? { enabled: config.action?.key !== "page_action" };
     const tab = deps.tabId();
     const action: ActionState = { ...shared, ...(tab === undefined ? {} : shared.tabs?.[tab]) };
-    if (config.action && !config.action.popup && !action.popup && action.enabled) {
+    if (config.action && action.enabled) {
       const title = action.title ?? config.action.title ?? config.name;
-      commands.push([action.badge ? `${title} (${action.badge})` : title, () => void deps.emit("action-click", null).catch((error: unknown) => log.error(error))]);
+      const caption = action.badge ? `${title} (${action.badge})` : title;
+      // A button with a popup opens it (spec §6); one without tells the background it was clicked.
+      if (config.pages?.popup && (config.action.popup || action.popup)) commands.push([`Open ${caption}`, () => deps.open("popup")]);
+      else if (!config.action.popup && !action.popup) commands.push([caption, () => void deps.emit("action-click", null).catch((error: unknown) => log.error(error))]);
     }
+    if (config.pages?.options) commands.push([`${config.name} options`, () => deps.open("options")]);
     const items = state?.items ?? [];
     const byId = new Map(items.map((item) => [item.id, item]));
     const parents = new Set(items.flatMap((item) => (item.parentId === undefined ? [] : [item.parentId])));

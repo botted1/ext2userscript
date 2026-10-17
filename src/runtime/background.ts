@@ -5,7 +5,7 @@
 // code a second time.
 import { createAlarms } from "./alarms.ts";
 import type { Assets } from "./assets.ts";
-import { createEvent, createLogger, method, readLastError, withFallback, type Logger } from "./chrome.ts";
+import { createEvent, createLogger, method, platformInfo, readLastError, RUNTIME_ENUMS, withFallback, type Logger } from "./chrome.ts";
 import { createCommands, EXECUTE_ACTION } from "./commands.ts";
 import { createCookies } from "./cookies.ts";
 import type { BackgroundCode, RuntimeConfig } from "./config.ts";
@@ -13,11 +13,11 @@ import type { Gm } from "./gm.ts";
 import { createBackgroundGlobal } from "./global.ts";
 import { keys } from "./keys.ts";
 import { checkLifecycle } from "./lifecycle.ts";
-import { createLocalStorage } from "./local-storage.ts";
 import { createMenus, type MenuClick } from "./menus.ts";
 import type { Messaging } from "./messaging.ts";
 import { createNetwork } from "./net.ts";
 import { createNotifications } from "./notifications.ts";
+import { CALLED_IN_BACKGROUND } from "./pages.ts";
 import { createPermissions } from "./permissions.ts";
 import { REGISTRY_TIMING } from "./registry.ts";
 import { createScripting } from "./scripting.ts";
@@ -33,29 +33,16 @@ export type BackgroundDeps = {
   storage: object;
   tabs: object;
   messaging: Messaging;
+  /** The extension's localStorage, which this tab's pages share. */
+  localStorage(): Promise<Storage>;
 };
 
-const platform = () => {
-  const ua = navigator.userAgent;
-  const os = /Windows/.test(ua) ? "win" : /Mac OS X/.test(ua) ? "mac" : /CrOS/.test(ua) ? "cros" : /Android/.test(ua) ? "android" : "linux";
-  return { os, arch: /arm|aarch64/i.test(ua) ? "arm64" : "x86-64", nacl_arch: "x86-64" };
-};
-
-/** Chrome's runtime enums, which background code compares against (details.reason === chrome.runtime.OnInstalledReason.INSTALL). */
-const RUNTIME_ENUMS = {
-  OnInstalledReason: { INSTALL: "install", UPDATE: "update", CHROME_UPDATE: "chrome_update", SHARED_MODULE_UPDATE: "shared_module_update" },
-  OnRestartRequiredReason: { APP_UPDATE: "app_update", OS_UPDATE: "os_update", PERIODIC: "periodic" },
-  PlatformOs: { MAC: "mac", WIN: "win", ANDROID: "android", CROS: "cros", LINUX: "linux", OPENBSD: "openbsd", FUCHSIA: "fuchsia" },
-  PlatformArch: { ARM: "arm", ARM64: "arm64", X86_32: "x86-32", X86_64: "x86-64", MIPS: "mips", MIPS64: "mips64" },
-  PlatformNaclArch: { ARM: "arm", X86_32: "x86-32", X86_64: "x86-64", MIPS: "mips", MIPS64: "mips64" },
-};
-
-export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): void; resume(): void }> {
+export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): void; resume(): void; global: unknown }> {
   const { config, gm, log, assets, messaging } = deps;
   const background = config.background;
   if (!background) throw new Error("startBackground: this extension has no background");
   const lifecycle = await checkLifecycle(gm, config.ns, String((config.manifest as { version?: unknown }).version ?? ""));
-  const localStorage = await createLocalStorage(gm, config.ns, log);
+  const localStorage = await deps.localStorage();
   const alarms = await createAlarms(gm, config.ns, log);
   // A persistent MV2 background page makes its menu each time it starts; an event page or service worker makes it once.
   const persistent = !background.worker && (config.manifest as { background?: { persistent?: unknown } }).background?.persistent !== false;
@@ -94,7 +81,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     onStartup: onStartup.event,
     // The background never suspends while its tab is open.
     onSuspend: onSuspend.event,
-    getPlatformInfo: method(log, async () => platform()),
+    getPlatformInfo: method(log, async () => platformInfo()),
     setUninstallURL: method(log, async () => {}),
     getBackgroundPage: method(log, async () => backgroundGlobal),
     ...structuredClone(RUNTIME_ENUMS),
@@ -130,6 +117,13 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     browserAction: withFallback(log, "browserAction", menus.action, "all"),
     pageAction: withFallback(log, "pageAction", menus.action, "all"),
   };
+  // The extension's pages call these namespaces here, where their state lives (pages.ts).
+  messaging.onEvent("call", (data) => {
+    const { namespace, member, args } = data as { namespace: string; member: string; args: unknown[] };
+    const fn = CALLED_IN_BACKGROUND.has(namespace) ? (known[namespace] as Record<string, unknown>)[member] : undefined;
+    if (typeof fn !== "function") throw new Error(`ext2userscript: chrome.${namespace}.${member} isn't available`);
+    return fn(...args);
+  });
   // The background has every API the manifest asks for. Ones this version doesn't implement fail with a named error when
   // used, so top-level code that sets them up (chrome.alarms.create(...)) doesn't stop the rest of the background.
   const fallbacks = new Map<string, object>();
@@ -190,6 +184,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     if (lifecycle.startup) onStartup.dispatch();
   });
   return {
+    global: backgroundGlobal,
     pause: () => {
       active = false;
       messaging.setBackgroundReady(false);

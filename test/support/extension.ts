@@ -309,6 +309,7 @@ document.addEventListener("x2u-ask-pages", () => chrome.runtime.sendMessage("who
 document.addEventListener("x2u-open-popup", () => chrome.runtime.sendMessage("open popup").then((reply) => (html.dataset.openPopup = reply)));`,
     "popup/popup.html": `<!doctype html><html><head><meta charset="utf-8"><title>Pop</title><link rel="stylesheet" href="popup.css"></head>
 <body><h1 id="title" style="color: rgb(7, 8, 9)">Pages</h1><img id="logo" src="../icon.png"><button id="options">Options</button>
+<svg id="icon" viewBox="0 0 10 10" width="20" height="20"><circle id="dot" cx="5" cy="5" r="5"/><use xlink:href="#dot"/></svg>
 <script src="lib.js"></script><script src="popup.js"></script><script src="broken.js"></script></body></html>`,
     "popup/broken.js": "throw new Error('a broken script');",
     "popup/popup.css": "body { width: 240px; margin: 0; background: url(../icon.png); } h1 { font-size: 20px; }",

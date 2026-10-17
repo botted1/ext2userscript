@@ -95,6 +95,22 @@ export function createEvent<F extends (...args: never[]) => unknown>(log: Logger
   return { event, dispatch };
 }
 
+/** runtime.getPlatformInfo's answer, from the user agent. */
+export const platformInfo = () => {
+  const ua = navigator.userAgent;
+  const os = /Windows/.test(ua) ? "win" : /Mac OS X/.test(ua) ? "mac" : /CrOS/.test(ua) ? "cros" : /Android/.test(ua) ? "android" : "linux";
+  return { os, arch: /arm|aarch64/i.test(ua) ? "arm64" : "x86-64", nacl_arch: "x86-64" };
+};
+
+/** Chrome's runtime enums, which extension code compares against (details.reason === chrome.runtime.OnInstalledReason.INSTALL). */
+export const RUNTIME_ENUMS = {
+  OnInstalledReason: { INSTALL: "install", UPDATE: "update", CHROME_UPDATE: "chrome_update", SHARED_MODULE_UPDATE: "shared_module_update" },
+  OnRestartRequiredReason: { APP_UPDATE: "app_update", OS_UPDATE: "os_update", PERIODIC: "periodic" },
+  PlatformOs: { MAC: "mac", WIN: "win", ANDROID: "android", CROS: "cros", LINUX: "linux", OPENBSD: "openbsd", FUCHSIA: "fuchsia" },
+  PlatformArch: { ARM: "arm", ARM64: "arm64", X86_32: "x86-32", X86_64: "x86-64", MIPS: "mips", MIPS64: "mips64" },
+  PlatformNaclArch: { ARM: "arm", X86_32: "x86-32", X86_64: "x86-64", MIPS: "mips", MIPS64: "mips64" },
+};
+
 export const unavailable = (api: string) => new Error(`ext2userscript: chrome.${api} is not available in userscripts`);
 
 /**

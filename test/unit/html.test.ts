@@ -29,7 +29,7 @@ describe("parseHtml", () => {
       ["ul", {}, ["li", {}, "one"], ["li", {}, "two"]],
       ["img", { src: "a.png" }],
       ["br", {}],
-      ["svg", { viewbox: "0 0 1 1" }, ["path", { d: "M0 0" }]],
+      ["svg", { viewBox: "0 0 1 1" }, ["path", { d: "M0 0" }]],
       ["p", {}, "a"],
       ["p", {}, "b"],
     ]);
@@ -37,6 +37,13 @@ describe("parseHtml", () => {
 
   it("closes what an end tag's element left open, ignores a stray end tag, and keeps a lone < as text", () => {
     assert.deepEqual(shape(parseHtml("<div><span>a</div>b</span> 1 < 2")), [["div", {}, ["span", {}, "a"]], "b 1 < 2"]);
+  });
+
+  it("gives SVG's mixed-case names their case back, as browsers do, but not HTML's inside a foreignObject", () => {
+    const html = `<svg viewbox="0 0 1 1"><linearGradient GRADIENTUNITS="userSpaceOnUse"/><foreignObject><div viewBox="x"></div></foreignObject><clipPath></clippath></svg>`;
+    assert.deepEqual(shape(parseHtml(html)), [
+      ["svg", { viewBox: "0 0 1 1" }, ["linearGradient", { gradientUnits: "userSpaceOnUse" }], ["foreignObject", {}, ["div", { viewbox: "x" }]], ["clipPath", {}]],
+    ]);
   });
 
   it("keeps the first of a repeated attribute, as browsers do", () => {

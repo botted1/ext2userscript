@@ -29,7 +29,7 @@ function tabWithMenu(hub: Hub) {
   };
 }
 
-async function setup(extra: Partial<RuntimeConfig> = {}, persistent = false) {
+async function setup(extra: Partial<RuntimeConfig> = {}, persistent = false, open: (kind: string) => void = () => {}) {
   const hub = createHub();
   const background = await createMenus({ gm: createGm(hub.tab()), ns: "t", log: createLogger("test"), config: config(extra), persistent });
   const tab = tabWithMenu(hub);
@@ -40,6 +40,7 @@ async function setup(extra: Partial<RuntimeConfig> = {}, persistent = false) {
     ns: "t",
     log: createLogger("test"),
     config: config(extra),
+    open,
     tabId: () => tabInfo.id,
     emit: async (type, data) => (type === "menu-click" ? background.click(data as MenuClick, tabInfo) : background.actionClick(tabInfo)),
   });
@@ -128,6 +129,19 @@ describe("toolbar button", () => {
     await eventually(() => tab.captions().includes("Page (2)"), 1000);
     assert.deepEqual([await action.getBadgeText({ tabId: 7 }), await action.getBadgeText({ tabId: 8 }), await action.getBadgeText({})], ["2", "5", ""]);
     assert.deepEqual([await action.isEnabled(7), await action.isEnabled(9)], [true, false]);
+  });
+
+  it("opens the popup and the options page from their menu commands, with the button's title and badge", async () => {
+    const page = { path: "p.html", htmlAttributes: [], bodyAttributes: [], head: [], body: [], css: [] };
+    const opened: string[] = [];
+    const { action, tab } = await setup({ action: { key: "action", title: "Do it", popup: true }, pages: { popup: page, options: page } }, false, (kind) => opened.push(kind));
+    await eventually(() => tab.captions().length === 2, 1000);
+    assert.deepEqual(tab.captions(), ["Open Do it", "Ext options"]);
+    await action.setBadgeText({ text: "4" });
+    await eventually(() => tab.captions().includes("Open Do it (4)"), 1000);
+    tab.click("Open Do it (4)");
+    tab.click("Ext options");
+    assert.deepEqual(opened, ["popup", "options"]);
   });
 
   it("shows no command for a button with a popup, or for an extension without a button", async () => {

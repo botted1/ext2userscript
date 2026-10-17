@@ -34,6 +34,8 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
     return blobUrl;
   };
 
+  const placeholders = (text: string) => text.replace(PLACEHOLDER, (_whole, encoded: string) => url(decodeURIComponent(encoded)));
+
   return {
     url,
     /** The asset path behind a blob URL this table handed out. */
@@ -51,11 +53,10 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
       const entry = table[toPath(path)];
       return entry ? `data:${entry[0]};base64,${entry[1]}` : undefined;
     },
-    /** Resolves asset placeholders and __MSG_name__ in a content group's CSS, as Chrome does for extension CSS. */
-    css: (text: string) =>
-      text
-        .replace(PLACEHOLDER, (_whole, encoded: string) => url(decodeURIComponent(encoded)))
-        .replace(/__MSG_([\w@]+)__/g, (_whole, name: string) => getMessage(name)),
+    /** Resolves asset placeholders and __MSG_name__ in extension CSS, as Chrome does. */
+    css: (text: string) => placeholders(text).replace(/__MSG_([\w@]+)__/g, (_whole, name: string) => getMessage(name)),
+    /** Resolves asset placeholders: in an extension page's attributes (src, srcset, style). */
+    placeholders,
   };
 }
 
