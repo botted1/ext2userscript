@@ -7,6 +7,7 @@
 // - apiExtension uses alarms, context menus, the toolbar button, a shortcut, scripting, notifications, cookies,
 //   permissions, windows and getBackgroundPage.
 // - pagesExtension has a popup, an options page, a background and a content script talking to each other.
+// - popupOnlyExtension has a popup and no background.
 // - plainExtension is the smallest one that converts with no unsupported or partial entries.
 import { strToU8, zipSync } from "fflate";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
@@ -344,5 +345,24 @@ try { sink.innerHTML = '<img src="data:," onerror="document.body.dataset.inline 
 document.getElementById("seen").textContent = label(localStorage.getItem("seen"));
 document.body.dataset.meta = import.meta.url;`,
     "label.js": 'export const label = (value) => "seen:" + value;',
+  });
+}
+
+/** A popup and a content script, without a background: the leader keeps the button's state for the popup. */
+export function popupOnlyExtension(origin: string): ExtensionFiles {
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "Popup Only",
+      version: "1.0.0",
+      action: { default_title: "Only", default_popup: "popup.html" },
+      commands: { _execute_action: { suggested_key: { default: "Alt+Shift+P" } } },
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"] }],
+    }),
+    "content.js": 'document.documentElement.dataset.content = "ready";',
+    "popup.html": '<!doctype html><p id="out"></p><script src="popup.js"></script>',
+    "popup.js": `const out = document.getElementById("out");
+chrome.action.setBadgeText({ text: "1" }).then(() => chrome.action.getBadgeText({})).then((text) => (out.dataset.badge = text));
+chrome.runtime.sendMessage("anyone?").then(() => (out.dataset.send = "answered"), (error) => (out.dataset.send = error.message));`,
   });
 }

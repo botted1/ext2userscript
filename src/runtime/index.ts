@@ -48,6 +48,8 @@ export function start(
     let pages: ReturnType<typeof createPages> | undefined;
     let leading = false;
     // One copy of the extension's localStorage per tab, for its background and its pages.
+    // A leader keeps the extension's state (menus, alarms, the button) for its background and its pages.
+    const hosting = background !== null || config.pages !== undefined;
     let local: Promise<Storage> | undefined;
     const localStorage = () => (local ??= createLocalStorage(gm, config.ns, log));
     let activeAt = document.visibilityState === "visible" ? Date.now() : 0;
@@ -76,14 +78,19 @@ export function start(
       pages: (from) =>
         registry ? [...(pages?.current() && from !== "page" ? [registry.me] : []), ...registry.live().flatMap((tab) => (tab.page ? [tab.id] : []))] : [],
       control: async (op, args) => {
+        // action.openPopup and runtime.openOptionsPage, from the background.
+        if (op === "open-page") {
+          if (!pages) throw new Error("this tab isn't ready");
+          return pages.open((args as { kind: PageKind }).kind);
+        }
         const injected = injector.run(op, args);
         if (injected) return injected;
         if (!tabs) throw new Error("this tab isn't ready");
         return tabs.control(op, args);
       },
     });
-    // Without a background, a message for it fails at once instead of waiting for one to start.
-    if (!background) messaging.setBackgroundReady(true);
+    // Without a leader to start, a message for the background fails at once instead of waiting for one.
+    if (!hosting) messaging.setBackgroundReady(true);
     // The manifest's keyboard shortcuts, in every frame: a shortcut pressed before this page has joined waits for it.
     // _execute_action opens the popup right here, when there is one.
     else {
@@ -179,10 +186,9 @@ export function start(
         if (event.persisted) void joined.rejoin();
       });
 
-      if (frame || (!background && !config.pages)) return;
+      if (frame || !hosting) return;
       // The background's context-menu items and toolbar button, and the extension's pages, as this tab's menu commands.
       void showMenus({ gm, ns: config.ns, log, config, tabId: () => joined.me, emit: messaging.emit, open: (kind) => void pages?.open(kind) });
-      if (!background) return;
       let starting = false;
       startElection(joined, {
         acquire: () => {

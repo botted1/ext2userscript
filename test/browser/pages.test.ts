@@ -8,8 +8,9 @@ import { loadEsbuild } from "../../src/convert/esbuild-node.ts";
 import { convert } from "../../src/convert/index.ts";
 import { loadRuntime } from "../../src/convert/runtime-node.ts";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
+import { NO_RECEIVER } from "../../src/runtime/messaging.ts";
 import { waitForAttr } from "../support/dom.ts";
-import { pagesExtension } from "../support/extension.ts";
+import { pagesExtension, popupOnlyExtension } from "../support/extension.ts";
 import { startServer, type Server } from "../support/server.ts";
 import { sleep } from "../support/time.ts";
 
@@ -172,6 +173,26 @@ for (const backend of backends) {
       await tab.close();
     });
 
+    it("moves from the popup to the options page, which shares localStorage and gives each module its own import.meta.url", async () => {
+      const tab = await open("/page.html");
+      await tab.keyboard.press("Alt+Shift+P");
+      const popup = await modalFrame(tab, "#title");
+      await popup.locator("#options").click();
+      const options = await modalFrame(tab, "#seen");
+      await until(() => popup.isDetached(), "the popup to close");
+      await until(async () => (await options.locator("#seen").textContent()) === "seen:popup", "the options page to read localStorage");
+      await frameAttr(options, "body", "data-meta", /^chrome-extension:\/\/[a-p]{32}\/options\.js$/);
+      await tab.close();
+    });
+
+    it("opens the popup from the background with action.openPopup", async () => {
+      const tab = await open("/page.html");
+      await tab.evaluate(() => document.dispatchEvent(new Event("x2u-open-popup")));
+      await waitForAttr(tab, "data-open-popup", "opened");
+      await modalFrame(tab, "#title");
+      await tab.close();
+    });
+
     it("opens the pages from their menu commands, on the emulator", { skip: backend !== "emulator" }, async () => {
       const tab = await open("/page.html");
       const emulator = session().emulator;
@@ -180,6 +201,19 @@ for (const backend of backends) {
       assert.deepEqual((await emulator.menu(tab)).map((caption) => caption.replace(/ \(\d+\)$/, "")).sort(), ["Open Pages", "Pages Sample options"]);
       assert.equal(await emulator.clickMenu(tab, "Pages Sample options"), true);
       await modalFrame(tab, "#seen");
+      await tab.close();
+    });
+  });
+
+  describe(`a popup without a background on ${backend}`, () => {
+    const { open } = harness(backend, popupOnlyExtension);
+
+    it("keeps the popup's badge on the leader, and its message for the background has no receiver", async () => {
+      const tab = await open("/page.html");
+      await tab.keyboard.press("Alt+Shift+P");
+      const popup = await modalFrame(tab, "#out");
+      await frameAttr(popup, "#out", "data-badge", "1");
+      await frameAttr(popup, "#out", "data-send", NO_RECEIVER);
       await tab.close();
     });
   });

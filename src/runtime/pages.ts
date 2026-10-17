@@ -80,7 +80,7 @@ export function createPages(deps: PagesDeps) {
         fetch: globalThis.fetch.bind(globalThis),
         XMLHttpRequest: globalThis.XMLHttpRequest,
       });
-      const chrome = scopeToPage(pageChrome(deps), cleanups);
+      const chrome = scopeToPage(pageChrome(deps, open), cleanups);
       const global = proxyGlobal(modal.win, { chrome, browser: chrome, localStorage, fetch: network.fetch, XMLHttpRequest: network.XMLHttpRequest, close: () => modal.close(), frameElement: null, opener: null }, [
         "window", "self", "globalThis", "top", "parent", "frames",
       ]);
@@ -109,7 +109,7 @@ export function createPages(deps: PagesDeps) {
 }
 
 /** The page's chrome object: what an extension page has, as the background has it (spec §5.2). */
-function pageChrome(deps: PagesDeps): object {
+function pageChrome(deps: PagesDeps, open: (kind: PageKind) => Promise<void>): object {
   const { config, log, messaging } = deps;
   const getURL = (path: string) => deps.assets.url(path);
   const never = () => createEvent<() => void>(log).event;
@@ -132,6 +132,8 @@ function pageChrome(deps: PagesDeps): object {
     onSuspend: never(),
     getPlatformInfo: method(log, async () => platformInfo()),
     getBackgroundPage: method(log, async () => backgroundPage()),
+    // The options page replaces the popup in the same modal.
+    openOptionsPage: method(log, () => open("options")),
     ...structuredClone(RUNTIME_ENUMS),
   }, "all");
   const extension = withFallback(log, "extension", {
