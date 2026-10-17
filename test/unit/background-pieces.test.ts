@@ -8,7 +8,7 @@ import { tabIdentity } from "../../src/runtime/identity.ts";
 import { checkLifecycle } from "../../src/runtime/lifecycle.ts";
 import { createLocalStorage } from "../../src/runtime/local-storage.ts";
 import { createHub } from "../support/gm-hub.ts";
-import { sleep } from "../support/time.ts";
+import { eventually, sleep } from "../support/time.ts";
 
 describe("tabIdentity", () => {
   const memory = () => {
@@ -91,6 +91,29 @@ describe("createLocalStorage", () => {
     assert.deepEqual([...hub.store.entries()].filter(([key]) => key.startsWith("x2u:t:ls:")).sort(), [["x2u:t:ls:n", "5"], ["x2u:t:ls:theme", "dark"]]);
     storage.clear();
     assert.equal(storage.length, 0);
+  });
+
+  it("follows other tabs' writes, to keys they create too", async () => {
+    const hub = createHub();
+    const a = await createLocalStorage(createGm(hub.tab()), "t", createLogger("test"));
+    const b = await createLocalStorage(createGm(hub.tab()), "t", createLogger("test"));
+    a.setItem("theme", "dark");
+    await eventually(() => b.getItem("theme") === "dark", 1000);
+    b.setItem("theme", "light");
+    await eventually(() => a.getItem("theme") === "light", 1000);
+    a.removeItem("theme");
+    await eventually(() => b.getItem("theme") === null && b.length === 0, 1000);
+  });
+
+  it("rings for a key created again after its removal, so a tab that started in between follows it", async () => {
+    const hub = createHub();
+    const a = await createLocalStorage(createGm(hub.tab()), "t", createLogger("test"));
+    a.setItem("theme", "dark");
+    a.removeItem("theme");
+    await sleep(5);
+    const late = await createLocalStorage(createGm(hub.tab()), "t", createLogger("test"));
+    a.setItem("theme", "light");
+    await eventually(() => late.getItem("theme") === "light", 1000);
   });
 });
 

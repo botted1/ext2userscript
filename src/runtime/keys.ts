@@ -13,6 +13,8 @@ export function keys(ns: string) {
     /** The background's localStorage: one value per key. */
     localStorage: (key: string) => `x2u:${ns}:ls:${key}`,
     localStoragePrefix: `x2u:${ns}:ls:`,
+    /** Rung when a localStorage key is created, so every tab's copy starts following it. */
+    localStorageDoorbell: `x2u:${ns}:ls-keys`,
     /** The extension version runtime.onInstalled last fired for. */
     installed: `x2u:${ns}:installed`,
     /** Written by the leader on every beat; missing or stale means the browser restarted (spec §5.4). */
