@@ -21,6 +21,8 @@ export type TabState = {
   activeAt: number;
   /** Whether the page has finished loading (its load event), as chrome.tabs reports it. A tab without one counts as complete. */
   status?: "loading" | "complete";
+  /** The extension page open in this tab's modal, which runtime.sendMessage reaches (spec §5.3). */
+  page?: "popup" | "options";
 };
 export type TabInfo = TabState & { id: number; since: number; ts: number };
 export type RegistryTiming = { heartbeatMs: number; staleMs: number; responseMs?: number };
@@ -153,6 +155,7 @@ export async function startRegistry(
         active: value.active === true,
         activeAt: typeof value.activeAt === "number" ? value.activeAt : 0,
         status: value.status === "loading" ? "loading" : "complete",
+        ...(value.page === "popup" || value.page === "options" ? { page: value.page } : {}),
         since: value.since,
         ts: value.ts,
       };

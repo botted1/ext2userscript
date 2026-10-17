@@ -1,13 +1,15 @@
 // Extension messaging (spec §5.3). Every page runs one router. It carries:
-// - runtime.sendMessage / onMessage and runtime.connect / onConnect, between content scripts and the background;
-// - tabs.sendMessage / tabs.connect, from the background to one tab's content scripts;
+// - runtime.sendMessage / onMessage and runtime.connect / onConnect, between content scripts, the background and the
+//   extension's pages (a popup or options page open in a tab);
+// - tabs.sendMessage / tabs.connect, from the background or an extension page to one tab's content scripts;
 // - control requests the tabs API sends to another tab (navigate, reload, close);
-// - events a page sends its background for the user's actions there: a menu command, a keyboard shortcut.
+// - events a page sends its background for the user's actions there (a menu command, a keyboard shortcut), and an
+//   extension page's calls to the namespaces whose state the background keeps.
 // Everything travels as JSON over the cross-tab bus. A message for this same page goes through the bus too, which
 // delivers it in a microtask, so delivery is always asynchronous and always a copy, as in Chrome.
 import { callWithLastError, createEvent, type ChromeEvent, type Logger } from "./chrome.ts";
 
-export type Endpoint = "content" | "background";
+export type Endpoint = "content" | "background" | "page";
 export type MessageSender = { id: string; url?: string; origin?: string; frameId?: number; tab?: unknown };
 
 type Side = "opener" | "receiver";
@@ -51,6 +53,8 @@ export type MessagingDeps = {
   exists(id: number): boolean;
   /** Runs a control request from another page's tabs API on this page. */
   control(op: string, args: unknown): Promise<unknown>;
+  /** The tabs with an extension page open that runtime.sendMessage from this endpoint reaches (not the sender's own page). */
+  pages?(from: Endpoint): number[];
 };
 
 export type Messaging = ReturnType<typeof createMessaging>;
@@ -85,9 +89,10 @@ export function createMessaging(deps: MessagingDeps) {
   const events = {
     content: { message: createEvent<MessageListener>(log), connect: createEvent<(port: Port) => void>(log) },
     background: { message: createEvent<MessageListener>(log), connect: createEvent<(port: Port) => void>(log) },
+    page: { message: createEvent<MessageListener>(log), connect: createEvent<(port: Port) => void>(log) },
   };
-  /** The background's handlers for events pages send it, by type. */
-  const eventHandlers = new Map<string, (data: unknown, sender: MessageSender) => void>();
+  /** The background's handlers for events pages send it, by type; what one returns (or resolves to) is the reply. */
+  const eventHandlers = new Map<string, (data: unknown, sender: MessageSender) => unknown>();
 
   /** Sends once the bus is up and the target is known; noTarget runs when there is nobody to send to. */
   const post = (target: () => number | undefined, wire: Wire | (() => Wire), noTarget?: () => void, onTarget?: (to: number) => void) => {
@@ -143,10 +148,29 @@ export function createMessaging(deps: MessagingDeps) {
     });
   };
 
-  const send = (target: () => number | undefined, to: Endpoint, data: unknown, from: Endpoint, callback?: (response?: unknown) => void) => {
+  const ask = (target: () => number | undefined, to: Endpoint, data: unknown, from: Endpoint) => {
     const id = nextId();
-    return finish(request(target, id, () => ({ k: "msg", id, to, data, sender: deps.sender(from) }), to === "background"), callback);
+    return request(target, id, () => ({ k: "msg", id, to, data, sender: deps.sender(from) }), to === "background");
   };
+
+  /**
+   * One message for several receivers (the background and open pages), as Chrome sends runtime.sendMessage to every
+   * extension page: the first answer wins. Without one, it settles closed if anyone listened, and as having no receiver
+   * otherwise.
+   */
+  const firstAnswer = (outcomes: Array<Promise<Outcome>>): Promise<Outcome> =>
+    new Promise((resolve) => {
+      let left = outcomes.length;
+      let listened = false;
+      if (left === 0) resolve({ error: NO_RECEIVER });
+      for (const outcome of outcomes) {
+        void outcome.then((result) => {
+          if (result.error === undefined ? !result.none : result.error !== NO_RECEIVER) return resolve(result);
+          if (result.none) listened = true;
+          if (--left === 0) resolve(listened ? { none: true } : { error: NO_RECEIVER });
+        });
+      }
+    });
 
   /**
    * Creates one end of a port. `open` is set for the end that connects: it sends the opening, and keeps what was posted
@@ -251,12 +275,17 @@ export function createMessaging(deps: MessagingDeps) {
     post(() => from, wire.k === "open" ? { k: "close", port: wire.port, side: "opener", error: NO_RECEIVER } : { k: "reply", id: wire.id, error: NO_RECEIVER });
 
   const onEvent = (wire: Wire & { k: "evt" }, from: number) => {
+    let result: unknown;
     try {
-      eventHandlers.get(wire.type)?.(wire.data, wire.sender);
+      result = eventHandlers.get(wire.type)?.(wire.data, wire.sender);
     } catch (error) {
       log.error(error);
+      result = Promise.reject(error);
     }
-    post(() => from, { k: "reply", id: wire.id });
+    Promise.resolve(result).then(
+      (data: unknown) => post(() => from, { k: "reply", id: wire.id, data }),
+      (error: unknown) => post(() => from, { k: "reply", id: wire.id, error: messageOf(error) }),
+    );
   };
 
   const handle = (payload: unknown, from: number): void => {
@@ -308,7 +337,7 @@ export function createMessaging(deps: MessagingDeps) {
   /** A target for one tab: nobody, if no such tab is live. */
   const tab = (tabId: number) => () => (deps.exists(tabId) ? tabId : undefined);
 
-  /** The runtime.* messaging members for content scripts or the background. */
+  /** The runtime.* messaging members for content scripts, the background or an extension page. */
   const runtime = (endpoint: Endpoint) => ({
     sendMessage: (...args: unknown[]) => {
       // (extensionId?, message, options?, callback?), aligned as Chrome aligns them: with two arguments left, the first is
@@ -319,17 +348,30 @@ export function createMessaging(deps: MessagingDeps) {
       const message = args[last];
       const extensionId = last >= 1 ? args[last - 1] : undefined;
       const external = typeof extensionId === "string" && extensionId !== deps.extensionId;
-      // Content scripts reach the background. The background reaches extension pages, and this version has none.
-      const target = endpoint === "content" && !external ? deps.leader : () => undefined;
-      return send(target, "background", message, endpoint, callback);
+      // Every extension page hears it, as does the background unless it sent it; a content script's own tab isn't one.
+      if (external) return finish(Promise.resolve({ error: NO_RECEIVER }), callback);
+      const outcomes = (deps.pages?.(endpoint) ?? []).map((id) => ask(tab(id), "page", message, endpoint));
+      if (endpoint !== "background") outcomes.unshift(ask(deps.leader, "background", message, endpoint));
+      return finish(firstAnswer(outcomes), callback);
     },
     onMessage: events[endpoint].message.event,
     connect: (...args: unknown[]): Port => {
       const info = (typeof args[args.length - 1] === "object" ? args[args.length - 1] : undefined) as { name?: string } | undefined;
-      return connect(endpoint === "content" ? deps.leader : () => undefined, "background", info?.name ?? "", endpoint);
+      // ponytail: a port reaches the background only, not other extension pages.
+      return connect(endpoint === "background" ? () => undefined : deps.leader, "background", info?.name ?? "", endpoint);
     },
     onConnect: events[endpoint].connect.event,
   });
+
+  function tabsFrom(from: Endpoint) {
+    return {
+      sendMessage: (tabId: number, message: unknown, ...rest: unknown[]) => {
+        const callback = typeof rest[rest.length - 1] === "function" ? (rest.pop() as (response?: unknown) => void) : undefined;
+        return finish(ask(tab(tabId), "content", message, from), callback);
+      },
+      connect: (tabId: number, info?: { name?: string }) => connect(tab(tabId), "content", info?.name ?? "", from),
+    };
+  }
 
   return {
     /** Starts sending through the bus; anything sent before then goes now. */
@@ -354,24 +396,22 @@ export function createMessaging(deps: MessagingDeps) {
       for (const port of [...ports.values()]) if (port.peer() === id && !port.reroute?.()) port.close();
     },
     runtime,
-    tabs: {
-      sendMessage: (tabId: number, message: unknown, ...rest: unknown[]) => {
-        const callback = typeof rest[rest.length - 1] === "function" ? (rest.pop() as (response?: unknown) => void) : undefined;
-        return send(tab(tabId), "content", message, "background", callback);
-      },
-      connect: (tabId: number, info?: { name?: string }) => connect(tab(tabId), "content", info?.name ?? "", "background"),
-    },
+    tabs: tabsFrom("background"),
+    /** tabs.sendMessage and tabs.connect, from the background or an extension page. */
+    tabsFrom,
     /**
-     * Tells the background about something the user did on this page (a menu command, a keyboard shortcut). It is held
-     * and sent again like a message for the background; it resolves once the background has handled it.
+     * Tells the background about something the user did on this page (a menu command, a keyboard shortcut), or asks it
+     * to run an extension page's call. It is held and sent again like a message for the background; it resolves to what
+     * the background's handler returned, once it has.
      */
-    emit: async (type: string, data: unknown): Promise<void> => {
+    emit: async (type: string, data: unknown, from: Endpoint = "content"): Promise<unknown> => {
       const id = nextId();
-      const outcome = await request(deps.leader, id, () => ({ k: "evt", id, type, data, sender: deps.sender("content") }), true);
+      const outcome = await request(deps.leader, id, () => ({ k: "evt", id, type, data, sender: deps.sender(from) }), true);
       if (outcome.error !== undefined) throw new Error(outcome.error);
+      return outcome.data;
     },
-    /** The background's handler for one type of event from pages. */
-    onEvent: (type: string, handler: (data: unknown, sender: MessageSender) => void) => {
+    /** The background's handler for one type of event from pages; its result is what emit resolves to. */
+    onEvent: (type: string, handler: (data: unknown, sender: MessageSender) => unknown) => {
       eventHandlers.set(type, handler);
     },
     /** Asks another page to run a control request (the tabs API's update, reload and remove). */

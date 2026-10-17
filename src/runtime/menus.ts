@@ -203,7 +203,7 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
  * popup and is enabled) and one per context-menu item this page can show. emit tells the background about a click.
  * Top frames only: a manager shows one menu per tab.
  */
-export async function showMenus(deps: { gm: Gm; ns: string; log: Logger; config: RuntimeConfig; tabId(): number | undefined; emit(type: string, data: unknown): Promise<void> }) {
+export async function showMenus(deps: { gm: Gm; ns: string; log: Logger; config: RuntimeConfig; tabId(): number | undefined; emit(type: string, data: unknown): Promise<unknown> }) {
   const { gm, log, config } = deps;
   const key = keys(deps.ns).menus;
   let registered: Array<number | string> = [];

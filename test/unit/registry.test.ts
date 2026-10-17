@@ -28,6 +28,23 @@ describe("tab registry", () => {
     }
   });
 
+  it("tells the other tabs which extension page a tab has open", async () => {
+    const hub = createHub();
+    let open: "popup" | undefined;
+    const a = await startRegistry(createGm(hub.tab()), "t", 1, () => ({ ...page(), ...(open ? { page: open } : {}) }), SLOW);
+    const b = await startRegistry(createGm(hub.tab()), "t", 2, page, SLOW);
+    try {
+      await eventually(() => b.live().length === 1, 300);
+      assert.equal(b.live()[0].page, undefined);
+      open = "popup";
+      await a.touch();
+      await eventually(() => b.live()[0]?.page === "popup", 300);
+    } finally {
+      await a.stop();
+      await b.stop();
+    }
+  });
+
   it("sees a tab leave at once, and come back on rejoin with a new since", async () => {
     const hub = createHub();
     const a = await startRegistry(createGm(hub.tab()), "t", 1, page, SLOW);

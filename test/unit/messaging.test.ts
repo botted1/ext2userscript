@@ -4,7 +4,7 @@ import { startBus } from "../../src/runtime/bus.ts";
 import { createLogger, readLastError } from "../../src/runtime/chrome.ts";
 import { leaderOf } from "../../src/runtime/elect.ts";
 import { createGm } from "../../src/runtime/gm.ts";
-import { createMessaging, NO_RECEIVER, PORT_CLOSED, type Port } from "../../src/runtime/messaging.ts";
+import { createMessaging, NO_RECEIVER, PORT_CLOSED, type Endpoint, type Port } from "../../src/runtime/messaging.ts";
 import { startRegistry } from "../../src/runtime/registry.ts";
 import { createHub, type Hub } from "../support/gm-hub.ts";
 import { eventually, sleep } from "../support/time.ts";
@@ -18,7 +18,7 @@ type Runtime = {
 };
 
 /** One page: registry, bus and router over the shared hub, with fast timings. */
-async function page(t: TestContext, hub: Hub, id: number, control: (op: string, args: unknown) => Promise<unknown> = async () => null) {
+async function page(t: TestContext, hub: Hub, id: number, control: (op: string, args: unknown) => Promise<unknown> = async () => null, pages?: (from: Endpoint) => number[]) {
   const gm = createGm(hub.tab());
   const registry = await startRegistry(gm, "t", id, () => ({ url: `https://site.test/${id}`, title: `page ${id}`, frame: false, active: false, activeAt: 0 }), { heartbeatMs: 20, staleMs: 5_000 });
   const messaging = createMessaging({
@@ -26,8 +26,10 @@ async function page(t: TestContext, hub: Hub, id: number, control: (op: string, 
     log: createLogger("test"),
     leader: () => leaderOf(registry),
     exists: (other) => other === id || registry.live().some((tab) => tab.id === other),
-    sender: (from) => (from === "content" ? { id: "ext", url: `https://site.test/${id}`, tab: { id } } : { id: "ext", url: "chrome-extension://ext/sw.js" }),
+    sender: (from) =>
+      from === "content" ? { id: "ext", url: `https://site.test/${id}`, tab: { id } } : { id: "ext", url: `chrome-extension://ext/${from === "page" ? "popup.html" : "sw.js"}` },
     control,
+    pages,
   });
   const bus = await startBus(gm, "t", registry, messaging.handle);
   messaging.attach((to, wire) => bus.send(to, wire));
@@ -41,6 +43,7 @@ async function page(t: TestContext, hub: Hub, id: number, control: (op: string, 
     messaging,
     content: messaging.runtime("content") as unknown as Runtime,
     background: messaging.runtime("background") as unknown as Runtime,
+    page: messaging.runtime("page") as unknown as Runtime,
   };
 }
 
@@ -134,6 +137,43 @@ describe("messaging", () => {
     assert.deepEqual(seen, [[{ id: "item" }, 2]]);
     // An event nobody handles is dropped quietly.
     await other.messaging.emit("unknown", null);
+  });
+
+  it("sends runtime.sendMessage to the background and every open extension page but the sender, and the first answer wins", async (t) => {
+    const hub = createHub();
+    const open = new Set<number>();
+    const pagesFor = (me: number) => (from: Endpoint) => [...open].filter((id) => !(from === "page" && id === me));
+    const leader = await page(t, hub, 1, undefined, pagesFor(1));
+    await sleep(5);
+    const tab = await page(t, hub, 2, undefined, pagesFor(2));
+    await eventually(() => leaderOf(tab.registry) === 1 && tab.registry.live().length === 1 && leader.registry.live().length === 1, 1000);
+    leader.messaging.setBackgroundReady(true);
+    tab.messaging.setBackgroundReady(true);
+    open.add(2);
+    // The background listens but doesn't answer; the popup in tab 2 does.
+    leader.background.onMessage.addListener(() => {});
+    tab.page.onMessage.addListener((message, sender, sendResponse) => sendResponse(`page got ${message} from ${sender.url}`));
+    assert.equal(await leader.content.sendMessage("hi"), "page got hi from https://site.test/1");
+    assert.equal(await leader.background.sendMessage("bg"), "page got bg from chrome-extension://ext/sw.js");
+    // A page doesn't hear itself: only the background does, and it doesn't answer.
+    assert.equal(await tab.page.sendMessage("self"), undefined);
+    open.delete(2);
+    await assert.rejects(leader.background.sendMessage("nobody") as Promise<unknown>, { message: NO_RECEIVER });
+  });
+
+  it("replies to a page's call with what the background's handler returns, or its error", async (t) => {
+    const hub = createHub();
+    const leader = await page(t, hub, 1);
+    await sleep(5);
+    const tab = await page(t, hub, 2);
+    leader.messaging.setBackgroundReady(true);
+    tab.messaging.setBackgroundReady(true);
+    leader.messaging.onEvent("call", async (data) => {
+      if (data === "bad") throw new Error("no such member");
+      return { got: data };
+    });
+    assert.deepEqual(await tab.messaging.emit("call", "x", "page"), { got: "x" });
+    await assert.rejects(tab.messaging.emit("call", "bad", "page"), { message: "no such member" });
   });
 
   it("sends a page's event again to the new leader when the page it went to goes away unanswered", async (t) => {

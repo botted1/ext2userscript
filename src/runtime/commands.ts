@@ -63,7 +63,7 @@ function shortcuts(config: RuntimeConfig, platform: string): Array<[name: string
 export function listenForCommands(
   target: EventTarget,
   config: RuntimeConfig,
-  emit: (type: string, data: unknown) => Promise<void>,
+  emit: (type: string, data: unknown) => Promise<unknown>,
   log: Logger,
   platform = commandPlatform(),
   isUserEvent = (event: Event) => event.isTrusted,
