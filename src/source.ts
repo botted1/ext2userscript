@@ -3,12 +3,10 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 import { unpack, type ExtensionFiles } from "./convert/unpack.ts";
-import { amoXpiUrl, cwsCrxUrl, edgeCrxUrl, fetchBytes } from "./download.ts";
+import { fetchBytes, parseStoreUrl, storeArchive, type StoreSource } from "./download.ts";
 
 export type Source =
-  | { kind: "cws"; id: string }
-  | { kind: "edge"; id: string }
-  | { kind: "amo"; slug: string }
+  | StoreSource
   | { kind: "url"; url: string }
   | { kind: "file"; path: string }
   | { kind: "dir"; path: string };
@@ -26,31 +24,13 @@ export async function parseSource(input: string): Promise<Source> {
   throw new Error(`Not a store URL, extension ID, AMO slug, file or directory: ${input}`);
 }
 
-function parseUrl(url: URL): Source {
-  const segments = url.pathname.split("/").filter(Boolean);
-  const host = url.hostname.toLowerCase();
-  const id = segments.filter((segment) => ID.test(segment)).pop();
-  if ((host === "chromewebstore.google.com" || (host === "chrome.google.com" && segments[0] === "webstore")) && id) return { kind: "cws", id };
-  if (host === "microsoftedge.microsoft.com" && id) return { kind: "edge", id };
-  const addon = segments.indexOf("addon");
-  if (host === "addons.mozilla.org" && addon !== -1 && segments[addon + 1]) return { kind: "amo", slug: decodeURIComponent(segments[addon + 1]) };
-  return { kind: "url", url: url.href };
-}
+const parseUrl = (url: URL): Source => parseStoreUrl(url) ?? { kind: "url", url: url.href };
 
 /** The archive's bytes, for every source but a directory. */
 export async function readArchive(source: Exclude<Source, { kind: "dir" }>): Promise<Uint8Array> {
-  switch (source.kind) {
-    case "cws":
-      return fetchBytes(cwsCrxUrl(source.id));
-    case "edge":
-      return fetchBytes(edgeCrxUrl(source.id));
-    case "amo":
-      return fetchBytes(await amoXpiUrl(source.slug));
-    case "url":
-      return fetchBytes(source.url);
-    case "file":
-      return new Uint8Array(await readFile(source.path));
-  }
+  if (source.kind === "url") return fetchBytes(source.url);
+  if (source.kind === "file") return new Uint8Array(await readFile(source.path));
+  return storeArchive(source);
 }
 
 /** The extension's files, and its store ID when the store has one Chrome would use for chrome.runtime.id. */

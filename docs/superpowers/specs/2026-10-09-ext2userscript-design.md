@@ -71,8 +71,8 @@ ext2userscript/
       ui.ts pages.ts    # the popup and options pages' modal, and their chrome object (§6)
     cli.ts              # download from stores, read dirs/files, call convert, write output
     download.ts         # CWS / AMO / Edge Add-ons fetchers (CLI and proxy)
-  web/                  # static Vite site, vanilla TS
-  proxy/                # optional Cloudflare Worker for store-link downloads (~20 lines)
+  web/                  # static page built with esbuild by web/build.ts, vanilla TS
+  proxy/                # optional Cloudflare Worker for store-link downloads (~30 lines)
   bench/
     corpus.json         # pinned cases
     cases/<id>.ts       # per-extension Playwright assertions
@@ -84,7 +84,7 @@ ext2userscript/
   test/                 # node:test unit tests + Playwright runtime tests
 ```
 
-Dependencies: `esbuild`, `esbuild-wasm`, `fflate`. Dev: `typescript`, `vite`, `playwright`. The CLI parses arguments with Node's `util.parseArgs` (no yargs). Tests use the built-in `node:test` runner.
+Dependencies: `esbuild`, `esbuild-wasm`, `fflate`. Dev: `typescript`, `playwright`. The web app builds with esbuild, already a dependency: one page and a worker need no dev server or plugins. The CLI parses arguments with Node's `util.parseArgs` (no yargs). Tests use the built-in `node:test` runner.
 
 ## 3. Conversion pipeline
 
@@ -357,17 +357,19 @@ ext2userscript report <source>          # analyse only, no output script
 ## 8. Web app
 - One page:
   - drop zone or file picker for `.crx`/`.zip`/`.xpi`;
-  - optional store-link field, enabled only when a proxy URL is configured at build time;
+  - optional store-link field, enabled only when `X2U_PROXY_URL` names a proxy at build time; without one it is disabled, saying why;
   - conversion progress;
-  - the report table, grouped by status;
+  - the report table, grouped by status: "Not supported", "Partly supported" and "Supported", the last collapsed; the verdict reads "Likely works", "Partly works" or "Unlikely to work";
   - "Download .user.js" and "Copy" buttons.
-- `esbuild-wasm` and its `.wasm` file are loaded on the first conversion, not on page load.
+- `esbuild-wasm` and its `.wasm` file are loaded on the first conversion that needs them (a module background or page), not on page load. The conversion worker itself loads with the first conversion.
 - Conversion runs in a Web Worker so the UI stays responsive.
-- Deployed to GitHub Pages from CI.
+- Every URL the page uses is relative, so it works under any path.
+- Deployed to GitHub Pages from CI: a `pages` job in `ci.yml` deploys after the tests, on pushes to `main`. The repository variable `X2U_PROXY_URL` names the proxy.
 - `proxy/` contains a Cloudflare Worker:
-  - It accepts `?src=<store url>` only for the three store hosts above.
-  - It adds `Access-Control-Allow-Origin` for the configured site origin, and limits responses to 50 MB.
-  - Off by default; documented for anyone who wants to host it.
+  - It accepts only GET with `?src=<store page URL>` for the three store hosts above, and fetches the archive with `src/download.ts`.
+  - Its answers carry `Access-Control-Allow-Origin` set to its `ALLOWED_ORIGIN` variable, and it refuses anything above 50 MB.
+  - When it fails, it gives its reason as plain text, with status 400, 405 or 502.
+  - Off by default; documented for anyone who wants to host it (`proxy/README.md`).
 
 ## 9. Error handling
 - **Conversion:** hard errors only for an unreadable archive, a missing or invalid `manifest.json`, or an esbuild failure the plugin can't recover from (the message names the file and line). Everything else becomes a report entry.
@@ -388,7 +390,8 @@ Unpack (crx2/crx3 fixtures), manifest normalisation (MV2 and MV3 fixtures, local
   - leader election under churn: 5 pages opened and closed randomly for 60s, asserting at most one leader after each settle period and no lost messages;
   - tabs registry events;
   - the popup bridge on a page with strict CSP (served locally): `test/browser/pages.test.ts`, on the emulator and the release tier;
-  - content-group matching with excludes and globs.
+  - content-group matching with excludes and globs;
+  - the web app (`test/browser/web.test.ts`) on Chromium, Firefox and WebKit. Playwright's Firefox doesn't launch on macOS 27, so Firefox runs in CI.
 
 ### 10.3 Conformance
 - One suite tests the `gm.ts` contract through the real `gm.ts`: values, value listeners (including changes from other tabs), menus, `addElement` timing, `xmlHttpRequest`, and `cookie` where `caps.cookies` is true. It runs against the emulator in CI and against real TM and VM in the release tier, which keeps the emulator from drifting from the real managers.

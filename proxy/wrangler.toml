@@ -1,0 +1,8 @@
+# The optional download proxy (proxy/README.md). Deploy with `npx wrangler deploy` from this folder.
+name = "ext2userscript-proxy"
+main = "worker.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+# The site that may read the proxy's answers: where the web app is hosted.
+ALLOWED_ORIGIN = "https://<you>.github.io"
