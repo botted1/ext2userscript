@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ext2userscript</title>
+    <meta name="description" content="Convert a Chrome or Firefox extension into a userscript for Tampermonkey or Violentmonkey, in your browser.">
+    <link rel="stylesheet" href="style.css">
+    <script src="main.js" defer></script>
+  </head>
+  <body>
+    <header class="meta">
+      <p class="fence" aria-hidden="true">// ==UserScript==</p>
+      <div class="line"><span class="key" aria-hidden="true">// @name</span><h1>ext2userscript</h1></div>
+      <div class="line"><span class="key" aria-hidden="true">// @description</span><p>Converts a Chrome or Firefox extension into a userscript for Tampermonkey or Violentmonkey.</p></div>
+      <div class="line"><span class="key" aria-hidden="true">// @privacy</span><p>Runs in your browser: the extension never leaves it.</p></div>
+      <p class="fence" aria-hidden="true">// ==/UserScript==</p>
+    </header>
+
+    <main>
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".crx,.zip,.xpi">
+        <span class="drop-text">Drop a <b>.crx</b>, <b>.zip</b> or <b>.xpi</b> file here, or <span class="pick">choose one</span></span>
+      </label>
+
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <p class="error" id="error" role="alert" hidden></p>
+
+      <section class="result" id="result" hidden aria-labelledby="result-title">
+        <h2 id="result-title"></h2>
+        <p class="verdict" id="verdict"></p>
+        <div class="actions">
+          <button type="button" id="download">Download .user.js</button>
+          <button type="button" id="copy" class="secondary">Copy</button>
+        </div>
+        <p class="install">Open the downloaded file in your browser, and Tampermonkey or Violentmonkey offers to install it.</p>
+        <ul class="warnings" id="warnings"></ul>
+        <div id="groups"></div>
+      </section>
+    </main>
+  </body>
+</html>

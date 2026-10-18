@@ -17,6 +17,17 @@ export type ModuleOptions = {
   define?: Record<string, string>;
 };
 
+/**
+ * esbuild loaded on first use: the web app's esbuild-wasm is 14 MB, and most extensions convert without it (spec §8).
+ * A failed load fails that call only; the next one tries again (loadEsbuild clears its own failure).
+ */
+export function lazyEsbuild(load: () => Promise<EsbuildApi>): EsbuildApi {
+  return {
+    build: (async (options: Parameters<EsbuildApi["build"]>[0]) => (await load()).build(options)) as EsbuildApi["build"],
+    transform: (async (input: string, options?: Parameters<EsbuildApi["transform"]>[1]) => (await load()).transform(input, options)) as EsbuildApi["transform"],
+  };
+}
+
 /** Bundles an ES-module entry from the extension's files into one string. Remote imports stay external and are listed. */
 export async function bundleModule(esbuild: EsbuildApi, files: ExtensionFiles, entry: string, options: ModuleOptions = {}): Promise<ModuleBundle> {
   const remoteImports: string[] = [];

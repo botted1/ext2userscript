@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { strToU8 } from "fflate";
-import { bundleModule } from "../../src/convert/esbuild.ts";
+import { bundleModule, lazyEsbuild } from "../../src/convert/esbuild.ts";
 import { loadEsbuild } from "../../src/convert/esbuild-node.ts";
 import { dirname, joinPath } from "../../src/convert/paths.ts";
 
@@ -17,6 +17,19 @@ describe("paths", () => {
 
   it("refuses to leave the extension root", () => {
     assert.throws(() => joinPath("js", "../../etc/passwd"), /escapes the extension root/);
+  });
+});
+
+describe("lazyEsbuild", () => {
+  it("loads esbuild when a conversion first uses it, not before", async () => {
+    let loads = 0;
+    const esbuild = lazyEsbuild(async () => {
+      loads++;
+      return loadEsbuild();
+    });
+    assert.equal(loads, 0);
+    assert.equal((await esbuild.transform("let a = 1", { minify: true })).code, "let a=1;\n");
+    assert.equal(loads, 1);
   });
 });
 
