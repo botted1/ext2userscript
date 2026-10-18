@@ -26,16 +26,25 @@ let worker: Worker | undefined;
 let latest = 0;
 let converted: { userscript: string; fileName: string } | undefined;
 
-function start(job: JobRequest, transfer: Transferable[] = []) {
-  const id = ++latest;
+/** A new job, from the moment the user asks: its id decides which answer shows, whatever finishes first. */
+function begin(): number {
   error.hidden = true;
   result.hidden = true;
   status.textContent = "Starting…";
+  return ++latest;
+}
+
+function start(id: number, job: JobRequest, transfer: Transferable[] = []) {
   // The worker, and with it the converter, loads on the first conversion, not with the page.
   if (!worker) {
     worker = new Worker("worker.js");
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => answer(event.data);
-    worker.onerror = (event) => fail(latest, `The converter couldn't start: ${event.message || "it failed to load"}`);
+    worker.onerror = (event) => {
+      // A worker that failed to load stays dead: the next conversion starts a new one.
+      worker?.terminate();
+      worker = undefined;
+      fail(latest, `The converter couldn't start: ${event.message || "it failed to load"}`);
+    };
   }
   worker.postMessage({ ...job, id } as Job, transfer);
 }
@@ -55,9 +64,17 @@ function answer(message: WorkerMessage) {
 }
 
 async function convertFile(file: File) {
-  if (!ARCHIVE.test(file.name)) return fail(++latest, `${file.name} isn't an extension archive: choose a .crx, .zip or .xpi file (zip a folder first).`);
-  const bytes = await file.arrayBuffer();
-  start({ kind: "file", bytes }, [bytes]);
+  const id = begin();
+  if (!ARCHIVE.test(file.name)) return fail(id, `${file.name} isn't an extension archive: choose a .crx, .zip or .xpi file (zip a folder first).`);
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch (error) {
+    // Moved or deleted since it was picked, or a cloud file that couldn't be fetched.
+    return fail(id, `Couldn't read ${file.name}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // Another file was picked while this one was being read.
+  if (id === latest) start(id, { kind: "file", bytes }, [bytes]);
 }
 
 function show(report: Report, userscript: string) {
@@ -85,6 +102,8 @@ function show(report: Report, userscript: string) {
   });
   $("groups").replaceChildren(...groups);
   result.hidden = false;
+  // The result takes the focus: a screen reader announces it, and the keyboard goes on to its buttons.
+  $("result-title").focus();
 }
 
 function element(tag: string, text: string, ...children: Node[]) {
@@ -125,7 +144,7 @@ addEventListener("drop", (event) => {
 if (__X2U_PROXY__) {
   store.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (link.value.trim()) start({ kind: "store", link: link.value.trim() });
+    if (link.value.trim()) start(begin(), { kind: "store", link: link.value.trim() });
   });
 } else {
   // Without a download proxy the field stays, disabled, saying why (spec §8).

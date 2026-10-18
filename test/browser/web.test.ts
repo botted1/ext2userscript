@@ -61,6 +61,8 @@ for (const [name, type] of browsers) {
       await page.goto(`${origin}/x2u/`);
       await page.locator("#file").setInputFiles(archive("sample.zip", sampleExtension(origin)));
       assert.equal(await result(page), "Sample Extension 1.2.3");
+      // The result takes the focus, so a screen reader announces it and the keyboard goes on from there.
+      assert.equal(await page.evaluate(() => document.activeElement?.id), "result-title");
       assert.equal(await page.locator("#verdict").textContent(), "Partly works");
       assert.deepEqual(await page.locator("#groups summary").allTextContents(), ["Partly supported (1)", "Supported (6)"]);
       const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#download").click()]);
@@ -129,6 +131,40 @@ for (const [name, type] of browsers) {
       } finally {
         await flaky.close();
       }
+    });
+
+    it("starts the converter again after it failed to load", async () => {
+      // worker.js fails once, as on a connection that dropped after the page loaded, then loads.
+      const routes = await site();
+      let failures = 1;
+      const worker = routes["/x2u/worker.js"];
+      routes["/x2u/worker.js"] = (request) => (failures-- > 0 ? new Response("unavailable", { status: 503 }) : worker(request));
+      const flaky = await startServer(routes);
+      try {
+        const page = await browser.newPage();
+        await page.goto(`${flaky.origin}/x2u/`);
+        await page.locator("#file").setInputFiles(archive("sample.zip", sampleExtension(flaky.origin)));
+        await page.locator("#error").waitFor({ state: "visible", timeout: 30_000 });
+        assert.match((await page.locator("#error").textContent()) ?? "", /^The converter couldn't start: /);
+        await page.locator("#file").setInputFiles(archive("sample.zip", sampleExtension(flaky.origin)));
+        assert.equal(await result(page), "Sample Extension 1.2.3");
+        await page.close();
+      } finally {
+        await flaky.close();
+      }
+    });
+
+    it("shows the file picked last, even when an earlier one takes longer to read", async () => {
+      const page = await browser.newPage();
+      await page.goto(`${origin}/x2u/`);
+      const large = files({ "manifest.json": JSON.stringify({ manifest_version: 3, name: "Large Sample", version: "1.0", content_scripts: [{ matches: ["https://a.test/*"], js: ["c.js"] }] }), "c.js": "" });
+      large.set("data/blob.bin", randomBytes(40 * 1024 * 1024));
+      await page.locator("#file").setInputFiles(archive("large.zip", large));
+      await page.locator("#file").setInputFiles(archive("sample.zip", sampleExtension(origin)));
+      assert.equal(await result(page), "Sample Extension 1.2.3");
+      await page.waitForTimeout(3_000);
+      assert.equal(await page.locator("#result-title").textContent(), "Sample Extension 1.2.3");
+      await page.close();
     });
 
     it("shows the latest of two overlapping conversions", async () => {
