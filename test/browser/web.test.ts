@@ -12,6 +12,9 @@ import { files, moduleBackgroundExtension, sampleExtension, zipFiles } from "../
 import { startServer, type Handler, type Server } from "../support/server.ts";
 
 const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", css: "text/css", js: "text/javascript", wasm: "application/wasm" };
+const ID = "abcdefghijklmnopabcdefghijklmnop";
+const STORE_PAGE = `https://chromewebstore.google.com/detail/sample/${ID}`;
+const LARGE_PAGE = `https://microsoftedge.microsoft.com/addons/detail/large/${ID}`;
 
 /** The built site's routes under /x2u/, as GitHub Pages serves a project site. */
 async function site(proxyUrl?: string) {
@@ -167,6 +170,50 @@ for (const [name, type] of browsers) {
       assert.equal(await result(page), `${name} 1.0`);
       assert.equal(await page.locator("#result img").count(), 0);
       assert.equal(await page.title(), "ext2userscript");
+      await page.close();
+    });
+
+    it("converts from a store page through the download proxy, with the store's ID as the extension's", async () => {
+      // The site and a stand-in for the proxy on one server, whose address the build needs first.
+      const routes: Record<string, Handler> = {};
+      const proxied = await startServer(routes);
+      try {
+        Object.assign(routes, await site(`${proxied.origin}/proxy`), {
+          "/proxy": (request: Request) => {
+            const src = new URL(request.url).searchParams.get("src");
+            if (src === STORE_PAGE) return new Response(zipFiles(sampleExtension(origin)));
+            if (src === LARGE_PAGE) return new Response(`Download is larger than 50 MiB: ${src}`, { status: 502 });
+            return new Response("src must be a Chrome Web Store, Firefox Add-ons or Edge Add-ons page", { status: 400 });
+          },
+        });
+        const page = await browser.newPage({ acceptDownloads: true });
+        await page.goto(`${proxied.origin}/x2u/`);
+        await page.locator("#link").fill(STORE_PAGE);
+        await page.locator("#store button").click();
+        assert.equal(await result(page), "Sample Extension 1.2.3");
+        const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#download").click()]);
+        assert.match(await readFile((await download.path()) as string, "utf8"), new RegExp(`"id":"${ID}"`));
+        await page.locator("#link").fill("https://example.com/extension.crx");
+        await page.locator("#store button").click();
+        await page.locator("#error", { hasText: "store" }).waitFor();
+        assert.equal(await page.locator("#error").textContent(), "Couldn't convert it: That isn't a Chrome Web Store, Firefox Add-ons or Edge Add-ons page");
+        // The proxy's own reason for failing reaches the page.
+        await page.locator("#link").fill(LARGE_PAGE);
+        await page.locator("#store button").click();
+        await page.locator("#error", { hasText: "50 MiB" }).waitFor();
+        assert.equal(await page.locator("#error").textContent(), `Couldn't convert it: Download is larger than 50 MiB: ${LARGE_PAGE}`);
+        await page.close();
+      } finally {
+        await proxied.close();
+      }
+    });
+
+    it("disables the store link without a download proxy, saying why", async () => {
+      const page = await browser.newPage();
+      await page.goto(`${origin}/x2u/`);
+      assert.equal(await page.locator("#link").isDisabled(), true);
+      assert.equal(await page.locator("#store button").isDisabled(), true);
+      assert.equal(await page.locator("#store-hint").isVisible(), true);
       await page.close();
     });
   });

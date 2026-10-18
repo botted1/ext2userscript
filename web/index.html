@@ -23,6 +23,15 @@
         <span class="drop-text">Drop a <b>.crx</b>, <b>.zip</b> or <b>.xpi</b> file here, or <span class="pick">choose one</span></span>
       </label>
 
+      <form class="store" id="store">
+        <label for="link">Or paste its store page</label>
+        <div class="row">
+          <input type="url" id="link" placeholder="https://chromewebstore.google.com/detail/…" autocomplete="off">
+          <button type="submit">Convert</button>
+        </div>
+        <p class="hint" id="store-hint" hidden>Store links need a download proxy, and this site has none. Download the extension's file and drop it above.</p>
+      </form>
+
       <p class="status" id="status" role="status" aria-live="polite"></p>
       <p class="error" id="error" role="alert" hidden></p>
 

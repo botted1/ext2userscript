@@ -2,8 +2,8 @@
 // ignores answers for any job but its latest.
 import type { Report } from "../src/convert/report.ts";
 
-/** What to convert: an archive's bytes. */
-export type JobRequest = { kind: "file"; bytes: ArrayBuffer };
+/** What to convert: an archive's bytes, or a store page to fetch it from through the download proxy. */
+export type JobRequest = { kind: "file"; bytes: ArrayBuffer } | { kind: "store"; link: string };
 export type Job = { id: number } & JobRequest;
 
 export type WorkerMessage =

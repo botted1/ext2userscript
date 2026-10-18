@@ -116,6 +116,32 @@ main {
   text-decoration: underline;
 }
 
+.store {
+  margin-top: 1.5rem;
+}
+
+.store label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+}
+
+.store .row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+input[type="url"] {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
 button {
   padding: 0.55rem 1rem;
   border: 1px solid var(--accent);
@@ -129,6 +155,12 @@ button {
 button.secondary {
   background: transparent;
   color: var(--accent);
+}
+
+button:disabled,
+input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 :focus-visible {

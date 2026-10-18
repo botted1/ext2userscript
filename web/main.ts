@@ -1,13 +1,18 @@
-// The web app's page (spec §8): takes an extension's archive (dropped or chosen), has the worker convert it, and shows
-// the report with the userscript to download or copy. Text from the extension (its name, the report) goes in through
-// textContent only, never as HTML.
+// The web app's page (spec §8): takes an extension's archive (dropped, chosen, or from its store page through the
+// download proxy), has the worker convert it, and shows the report with the userscript to download or copy. Text from
+// the extension (its name, the report) goes in through textContent only, never as HTML.
 import { slugify } from "../src/convert/metadata.ts";
 import type { Report, Status, Verdict } from "../src/convert/report.ts";
 import type { Job, JobRequest, WorkerMessage } from "./protocol.ts";
 
+/** The download proxy's URL, put in by web/build.ts; empty when the site has none. */
+declare const __X2U_PROXY__: string;
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const drop = $<HTMLLabelElement>("drop");
 const fileInput = $<HTMLInputElement>("file");
+const store = $<HTMLFormElement>("store");
+const link = $<HTMLInputElement>("link");
 const status = $<HTMLParagraphElement>("status");
 const error = $<HTMLParagraphElement>("error");
 const result = $<HTMLElement>("result");
@@ -116,6 +121,17 @@ addEventListener("drop", (event) => {
   const file = event.dataTransfer?.files[0];
   if (file) void convertFile(file);
 });
+
+if (__X2U_PROXY__) {
+  store.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (link.value.trim()) start({ kind: "store", link: link.value.trim() });
+  });
+} else {
+  // Without a download proxy the field stays, disabled, saying why (spec §8).
+  for (const control of store.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true;
+  $("store-hint").hidden = false;
+}
 
 $("download").addEventListener("click", () => {
   if (!converted) return;
