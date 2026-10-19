@@ -1,0 +1,215 @@
+{
+  "cases": [
+    {
+      "id": "material-icons-github",
+      "name": "Material Icons for GitHub",
+      "store": "cws",
+      "extensionId": "bggfcpfjbdkhfhfmkjpbhnkhnpjjeomc",
+      "version": "1.17.1",
+      "sha256": "ee51230eb26f80377cead05b9c229d952a9084fcf8763d3e064a88088dcdde3b",
+      "kind": "legacy"
+    },
+    {
+      "id": "json-formatter",
+      "name": "JSON Formatter",
+      "store": "cws",
+      "extensionId": "bcjindcccaagfpapjjmafapmmgkkhgoa",
+      "version": "0.10.2",
+      "sha256": "5e0ebde71ee60f997a9f5fc0850e6ae4a9f67006dbf662f00507f99e957c2b21",
+      "kind": "legacy"
+    },
+    {
+      "id": "modern-wikipedia",
+      "name": "Modern for Wikipedia",
+      "store": "cws",
+      "extensionId": "emdkdnnopdnajipoapepbeeiemahbjcn",
+      "version": "1.41",
+      "sha256": "48e6266e17e0123c3b2fc65f184289c45353b804e31852fbb7b4f8cda42d20be",
+      "kind": "legacy"
+    },
+    {
+      "id": "return-youtube-dislike",
+      "name": "Return YouTube Dislike",
+      "store": "cws",
+      "extensionId": "gebbhagfogifgggkldgodflihgfeippi",
+      "version": "4.0.5",
+      "sha256": "a2b942c162f419e00b41808cc6b1ddef5c29396355ba92e4d15aed41cc58b549",
+      "kind": "legacy"
+    },
+    {
+      "id": "web-search-navigator",
+      "name": "Web Search Navigator",
+      "store": "amo",
+      "extensionId": "web-search-navigator",
+      "version": "0.5.2",
+      "sha256": "838c5e6e1520232716275c1a284fbeaeb3d5ef2ae16a67ee55fdbe208f4e439b",
+      "kind": "legacy"
+    },
+    {
+      "id": "ublacklist",
+      "name": "uBlacklist",
+      "store": "cws",
+      "extensionId": "pncfbmialoiaghdehhbnbhkkgmjanfhe",
+      "version": "10.1.2",
+      "sha256": "ab798a40488d57f93d3fa33beb25e6cd7031cb14d9b4930b774fbe94320508ac",
+      "kind": "legacy"
+    },
+    {
+      "id": "iridium",
+      "name": "Iridium for YouTube",
+      "store": "cws",
+      "extensionId": "gbjmgndncjkjfcnpfhgidhbgokofegbl",
+      "version": "2.1.2",
+      "sha256": "76543bff5f94504ed4976f8b3fa2a54d53c621144b28de305909eaeba815adf4",
+      "kind": "legacy"
+    },
+    {
+      "id": "modern-hacker-news",
+      "name": "Modern for Hacker News",
+      "store": "cws",
+      "extensionId": "dabkegjlekdcmefifaolmdhnhdcplklo",
+      "version": "1.14",
+      "sha256": "0a578896fdae4a1d0041d5d34f2da693d9b4789f173340a975e90b234d03fd4d",
+      "kind": "legacy"
+    },
+    {
+      "id": "leetcode-enhancer",
+      "name": "LeetCode Enhancer",
+      "store": "cws",
+      "extensionId": "cpoclfijojgjiafnlgnhjalkaiabcjch",
+      "version": "0.0.18",
+      "sha256": "3c06f36a85101a46eab4ef2d513d4b5e753f49f889051fbe47ed2bdce77fef01",
+      "kind": "modern"
+    },
+    {
+      "id": "refined-github",
+      "name": "Refined GitHub",
+      "store": "cws",
+      "extensionId": "hlepfoohegkhhmjieoechaddaejaokhf",
+      "version": "26.10.15",
+      "sha256": "c3a5b79e366a38e1bc8d5b4852db86fbe26a74bdb1fcc03d97ffcab7176e0024",
+      "kind": "modern"
+    },
+    {
+      "id": "sponsorblock",
+      "name": "SponsorBlock",
+      "store": "cws",
+      "extensionId": "mnjggcdmjocbbbhaepdhchncahnbgone",
+      "version": "6.1.6",
+      "sha256": "5587fe2b6a9946101ca0dde7c6efe76a755c5ee5b6d6e63dfc48c7f736cdb4ff",
+      "kind": "modern"
+    },
+    {
+      "id": "unhook",
+      "name": "Unhook",
+      "store": "cws",
+      "extensionId": "khncfooichmfjbepaaaebmommgaepoid",
+      "version": "1.6.9",
+      "sha256": "8622b2698dff08baae26a8c3638f524e66dfc12562e728694819fa1ef2e28023",
+      "kind": "modern"
+    },
+    {
+      "id": "dark-reader",
+      "name": "Dark Reader",
+      "store": "cws",
+      "extensionId": "eimadpbcbfnmbkopoojfekhnkhdbieeh",
+      "version": "4.9.133",
+      "sha256": "ee38f20d1d50789f4b482c9a1a5dadab599b8682fd2a7dfb7de21fae8561b918",
+      "kind": "modern"
+    },
+    {
+      "id": "betterttv",
+      "name": "BetterTTV",
+      "store": "cws",
+      "extensionId": "ajopnjidmegmdimjlfnijceegpefgped",
+      "version": "7.7.28",
+      "sha256": "6089554fd0f7c575c6af22699560e2494f11729bfdfad387369b5d31d82bb31e",
+      "kind": "modern"
+    },
+    {
+      "id": "augmented-steam",
+      "name": "Augmented Steam",
+      "store": "cws",
+      "extensionId": "dnhpnfgdlenaccegplpojghhmaamnnfp",
+      "version": "5.0.0",
+      "sha256": "5494bb90e170d5a7742db46312f2617ff38125f118ef51d77affa1eb4f9c0368",
+      "kind": "modern"
+    },
+    {
+      "id": "improve-youtube",
+      "name": "Improve YouTube!",
+      "store": "cws",
+      "extensionId": "bnomihfieiccainjcjblhegjgglakjdd",
+      "version": "4.2081",
+      "sha256": "81cc045737cd485412a415583300a529b0aaead5ec84c05d741b7a3900f7ca2c",
+      "kind": "modern"
+    },
+    {
+      "id": "reddit-enhancement-suite",
+      "name": "Reddit Enhancement Suite",
+      "store": "cws",
+      "extensionId": "kbmfpngjjgdllneeigpgjifpgocmfgmb",
+      "version": "5.24.11",
+      "sha256": "fb8100764b797e95c8fe1dd712f9ce0363cac5cb4daeaefa45fd5ab1e641e550",
+      "kind": "modern"
+    },
+    {
+      "id": "modrinth-extras",
+      "name": "Modrinth Extras",
+      "store": "cws",
+      "extensionId": "ajmkilipadfpaefpcjfgnkejalmhdlcj",
+      "version": "1.7.5",
+      "sha256": "7cdbbd94f6d20c4253b31fc7b22d815287d7986ca213c487a14bfc959cbd2af5",
+      "kind": "modern",
+      "swap": {
+        "replaces": "Wikiwand",
+        "reason": "Wikiwand 11.0.0 has no content scripts: its one feature is a declarativeNetRequest redirect to wikiwand.com, which a userscript can't do. Modrinth Extras is a site-specific MV3 extension built with WXT."
+      }
+    },
+    {
+      "id": "octotree",
+      "name": "Octotree",
+      "store": "cws",
+      "extensionId": "bkhaagjahfmjljalopjnoealnfndnagc",
+      "version": "9.3.2",
+      "sha256": "fef2d4ed27061a3f7f8c41f61f229064e4375516980e123c0a89f40eb55b8a43",
+      "kind": "modern"
+    },
+    {
+      "id": "enhanced-github",
+      "name": "Enhanced GitHub",
+      "store": "cws",
+      "extensionId": "anlikcnbgdeidpacdbdljnabclhahhmd",
+      "version": "6.0.0",
+      "sha256": "4fe8ba8498b117f8c168fd4e09f89c3a34593b64909eb1af610d141e07527ce0",
+      "kind": "modern"
+    },
+    {
+      "id": "ublock-origin-lite",
+      "name": "uBlock Origin Lite",
+      "store": "cws",
+      "extensionId": "ddkjiahejlhfcafbddmgiahcphecmpfh",
+      "version": "2026.1012.1545",
+      "sha256": "de67c08f8f7a337bc82c2cc86423eea0243e02be3fd3bd9e289c20c82eadb24a",
+      "kind": "negative"
+    },
+    {
+      "id": "momentum",
+      "name": "Momentum",
+      "store": "cws",
+      "extensionId": "laookkfknpbbblfpciffpaejjkokdgca",
+      "version": "2.27.8",
+      "sha256": "c7d574585d6c26065ef5efffcdcbdc89ec92c28857138b4522da0eb4bc425328",
+      "kind": "negative"
+    },
+    {
+      "id": "react-devtools",
+      "name": "React Developer Tools",
+      "store": "cws",
+      "extensionId": "fmkadmapgofadopljbjfkapdkoienihi",
+      "version": "8.0.0",
+      "sha256": "d92e1122a16362cc5510927068a5b1a8d50b43e1f3be25c3117f7c005807b302",
+      "kind": "negative"
+    }
+  ]
+}

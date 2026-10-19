@@ -75,11 +75,18 @@ ext2userscript/
   proxy/                # optional Cloudflare Worker for store-link downloads (~30 lines)
   bench/
     corpus.json         # pinned cases
+    corpus.ts           # the corpus, its archives and pins
+    pin.ts              # npm run bench:pin
+    case.ts             # what a case script is, and what a run of one gives
     cases/<id>.ts       # per-extension Playwright assertions
+    fixtures.ts         # pages served for sites that stop automated browsers
+    tools.ts            # the two converters
+    reference.ts        # the original extension, loaded unpacked
+    scorecard.ts        # the scorecard and the ship criteria
     emulator/           # stands in for TM/VM behind gm.ts (CI tier)
     real/               # release tier: profile setup, launch and userscript install for real TM/VM
     session.ts          # one API over the emulator, tm and vm backends
-    run.ts              # runs corpus for ext2userscript and the baseline, prints scorecard
+    run.ts              # runs the corpus for ext2userscript, the baseline and the original extension, and writes a scorecard per backend
   spikes/               # throwaway spike code and its recorded results
   test/                 # node:test unit tests + Playwright runtime tests
 ```
@@ -399,16 +406,25 @@ Unpack (crx2/crx3 fixtures), manifest normalisation (MV2 and MV3 fixtures, local
 ### 10.4 Benchmark corpus (`bench/corpus.json`)
 Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`legacy`, `modern` or `negative`) and a `cases/<id>.ts` assertion script. Archives are downloaded and cached under `bench/.cache/` (git-ignored); third-party binaries are never committed.
 
+- **Pinning:** the stores serve only an extension's latest version. A case whose pinned archive isn't in the cache runs on the store's current one, and the scorecard shows `<version> (pinned <version>)`. `npm run bench:pin [-- --case id,…]` re-pins.
 - **Legacy (8):** the baseline's examples. Material Icons for GitHub, JSON Formatter, Modern for Wikipedia, Return YouTube Dislike, Web Search Navigator, uBlacklist, Iridium, Modern for Hacker News.
 - **Modern MV3 (12):** LeetCode Enhancer (WXT), Refined GitHub, SponsorBlock, Unhook, Dark Reader, BetterTTV, Augmented Steam, Improve YouTube!, Reddit Enhancement Suite, Wikiwand, Octotree, Enhanced GitHub.
   - Any of these that can't be pinned is swapped for another site-specific MV3 extension built with WXT, Plasmo or Vite. Reasons: it is no longer downloadable, it isn't MV3, or its core feature needs an out-of-scope API.
-  - Each swap is recorded in `corpus.json` with a reason.
-- **Negative (3):** uBlock Origin Lite (`declarativeNetRequest`), Momentum (new-tab override), React Developer Tools (devtools panel). A case passes when the report verdict is `unlikely` and names the right APIs.
-- **Assertions:** each case visits a public or locally served page and checks one or two observable effects, such as "JSON is formatted" or "dislike count element present". The popup is opened through the menu-command hook where the extension has one.
+  - Each swap is recorded in `corpus.json` with a reason. Wikiwand is swapped for Modrinth Extras: its one feature is a `declarativeNetRequest` redirect.
+- **Negative (3):** uBlock Origin Lite (`declarativeNetRequest`), Momentum (new-tab override), React Developer Tools (devtools panel). A case passes when the report verdict is `unlikely` and names the right APIs. The baseline writes no report, so it gets n/a.
+- **Assertions:** each case checks one or two observable effects, such as "JSON is formatted" or "dislike count element present".
+  - **Pages:** a case visits a public page, or serves the page itself (Playwright routes) where the site stops automated browsers: Google, Reddit and LeetCode. A served page carries only the markup the extension reads. No case gets past a CAPTCHA or bot check.
+  - **Scope:** cases check what the extension does to pages. The popup and options pages are covered by §10.2's tests.
+- **The reference:** each browser case also runs once against the original extension, loaded unpacked in Chromium.
+  - A case the original fails is inconclusive: it counts for nothing, and the release gate fails while any case is.
+  - Manifest V2 cases have no reference, because Chromium no longer loads MV2.
 
 ### 10.5 Tiers
 - **CI (every push):** unit, runtime, conformance against the emulator, and the full corpus against the emulator. Results go to a scorecard (Markdown) that compares ext2userscript with the baseline (latest npm version) on the same corpus.
+  - A `bench` job runs `npm run bench` on the emulator and adds the scorecard to the job summary. It doesn't fail the build.
 - **Release (manual, local):** the same corpus and conformance suite run against real Tampermonkey and Violentmonkey in Chrome for Testing, using a persistent profile where "Allow User Scripts" was switched on once by hand. Its path is passed as `BENCH_PROFILE`. A release needs both tiers green.
+  - `X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate` exits 1 unless the criteria are met on every backend, with every case conclusive.
+  - Each real-manager session runs on its own copy of `BENCH_PROFILE`, without its caches, so a case runs only its own userscript.
 
 ## 11. Early spikes (plan phase 0, before the main build)
 

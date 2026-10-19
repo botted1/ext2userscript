@@ -15,7 +15,8 @@
     "cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts",
     "typecheck": "tsc -p .",
     "web": "node --experimental-strip-types --disable-warning=ExperimentalWarning web/build.ts",
-    "bench:setup": "node --experimental-strip-types --disable-warning=ExperimentalWarning bench/real/setup.ts"
+    "bench:pin": "node --experimental-strip-types --disable-warning=ExperimentalWarning bench/pin.ts",
+    "bench:setup":"node --experimental-strip-types --disable-warning=ExperimentalWarning bench/real/setup.ts"
   },
   "dependencies": {
     "esbuild": "0.28.2",
