@@ -82,7 +82,7 @@ export function createPages(deps: PagesDeps) {
       ], globalThis);
       const code = deps.code[kind];
       try {
-        code?.(chrome, chrome, global, global, global, modal.doc, modal.win.location, modal.win.history, localStorage, network.fetch, network.XMLHttpRequest, global.setTimeout, global.setInterval, global.clearTimeout, global.clearInterval, modal.win.DOMParser, `chrome-extension://${config.id}/`)();
+        code?.(chrome, chrome, global, global, global, modal.doc, modal.win.location, modal.win.history, localStorage, network.fetch, network.XMLHttpRequest, global.setTimeout, global.setInterval, global.clearTimeout, global.clearInterval, modal.win.DOMParser, `chrome-extension://${config.id}/`).call(global);
       } catch (error) {
         log.error(`the ${kind} page's code failed:`, error);
       }

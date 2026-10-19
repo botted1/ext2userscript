@@ -40,7 +40,7 @@ export function emit(
   });
   const files = Object.entries(injectables).map(([path, text]) => `${JSON.stringify(path)}: ${factory(text)}`);
   const backgroundFactory = background
-    ? `function (chrome, browser, self, globalThis, window, document, importScripts, localStorage, fetch, XMLHttpRequest, __x2uImportMeta) {\nreturn function () {\n${withExports(background)}\n};\n}`
+    ? `function (chrome, browser, self, globalThis, window, document, importScripts, localStorage, fetch, XMLHttpRequest, location, __x2uImportMeta) {\nreturn function () {\n${withExports(background)}\n};\n}`
     : "null";
   const pageFactories = Object.entries(pages).map(
     ([kind, text]) =>

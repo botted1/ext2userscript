@@ -82,6 +82,8 @@ export type BackgroundCode = (
   localStorage: unknown,
   fetch: unknown,
   XMLHttpRequest: unknown,
+  /** The background's own URL: its service worker's script, its page, or _generated_background_page.html. */
+  location: unknown,
   /** import.meta for a module background; for a background page, exports hands over its top-level declarations. */
   __x2uImportMeta: { url: string; exports?: () => object },
 ) => () => void;

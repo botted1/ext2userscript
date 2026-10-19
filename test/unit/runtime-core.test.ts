@@ -1,7 +1,9 @@
 import { describe, it, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createAssets } from "../../src/runtime/assets.ts";
+import { backgroundChrome, backgroundLocation } from "../../src/runtime/background.ts";
 import { callWithLastError, createEvent, createLogger, method, readLastError, withFallback, type Logger } from "../../src/runtime/chrome.ts";
+import { withGlobals } from "../../src/runtime/content.ts";
 import { createI18n, pickLocale } from "../../src/runtime/i18n.ts";
 import { frameScript } from "../../src/runtime/trusted.ts";
 
@@ -234,6 +236,26 @@ describe("createAssets", () => {
   });
 });
 
+describe("backgroundChrome", () => {
+  it("answers a namespace it doesn't implement with one that fails by name, and nothing for other names", async () => {
+    const log = recorder();
+    const chrome = backgroundChrome({ runtime: { id: "x" } }, log) as Record<string, any>;
+    assert.equal(chrome.runtime.id, "x");
+    await assert.rejects(chrome.alarms.create("a"), /chrome\.alarms\.create is not available in userscripts/);
+    for (const name of ["__esModule", "then", "toJSON", "Symbol", "_private"]) assert.equal(chrome[name], undefined, name);
+  });
+});
+
+describe("backgroundLocation", () => {
+  it("is the service worker's script, the background page, or the generated page, with the extension's origin", () => {
+    const worker = backgroundLocation("abc", { worker: true, entry: "js/sw.js" });
+    assert.deepEqual([worker.href, worker.origin, worker.protocol, worker.host, worker.pathname, String(worker)], ["chrome-extension://abc/js/sw.js", "chrome-extension://abc", "chrome-extension:", "abc", "/js/sw.js", "chrome-extension://abc/js/sw.js"]);
+    assert.equal(new URL("js/sw.js", worker.origin).pathname, worker.pathname);
+    assert.equal(backgroundLocation("abc", { worker: false, entry: "bg.html" }).pathname, "/bg.html");
+    assert.equal(backgroundLocation("abc", { worker: false, entry: "a.js" }).pathname, "/_generated_background_page.html");
+  });
+});
+
 describe("frameScript", () => {
   it("reads the script a V8 stack frame belongs to, with or without a function name", () => {
     assert.equal(frameScript("    at Proxy.later (chrome-extension://abc/userscript.html?name=a.user.js&id=1:15:134)"), "chrome-extension://abc/userscript.html?name=a.user.js&id=1");
@@ -241,5 +263,11 @@ describe("frameScript", () => {
     assert.equal(frameScript("    at <anonymous>:289:15"), "<anonymous>");
     assert.equal(frameScript("Error"), undefined);
     assert.equal(frameScript(undefined), undefined);
+  });
+});
+
+describe("withGlobals", () => {
+  it("runs the code with this as its global, as Chrome runs a content script's top level", () => {
+    assert.equal(withGlobals({}, function (this: unknown) { return this; }), globalThis);
   });
 });

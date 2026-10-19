@@ -81,7 +81,9 @@ export function withGlobals<T>(chrome: object, fn: () => T): T {
     if (!descriptor || descriptor.configurable) Reflect.defineProperty(global, name, { value: chrome, configurable: true, writable: true });
   }
   try {
-    return fn();
+    // this is the global, as at a content script's top level in Chrome: a UMD library that puts itself on globalThis
+    // and one that looks for it on this must meet (Modern for Hacker News: Popper, then tippy.js).
+    return fn.call(global);
   } finally {
     for (const [name, descriptor] of saved) {
       if (descriptor && !descriptor.configurable) continue;

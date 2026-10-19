@@ -133,17 +133,7 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
     if (typeof fn !== "function") throw new Error(`ext2userscript: chrome.${namespace}.${member} isn't available`);
     return fn(...args);
   });
-  // The background has every API the manifest asks for. Ones this version doesn't implement fail with a named error when
-  // used, so top-level code that sets them up (chrome.alarms.create(...)) doesn't stop the rest of the background.
-  const fallbacks = new Map<string, object>();
-  const chrome = new Proxy(known, {
-    get(target, property) {
-      if (typeof property === "symbol" || property in target || property === "then" || property === "toJSON") return Reflect.get(target, property);
-      let namespace = fallbacks.get(property);
-      if (!namespace) fallbacks.set(property, (namespace = withFallback(log, property, {}, "all")));
-      return namespace;
-    },
-  });
+  const chrome = backgroundChrome(known, log);
   if (background && deps.code) backgroundGlobal = run(background, deps.code);
 
   /** Runs the background's code from the top, in its wrapper (spec §3.3), and returns its global object. */
@@ -166,7 +156,8 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
       XMLHttpRequest: globalThis.XMLHttpRequest,
     });
     const XMLHttpRequest = background.worker ? undefined : network.XMLHttpRequest;
-    const { global, fire, expose } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage, fetch: network.fetch, XMLHttpRequest });
+    const ownLocation = backgroundLocation(config.id, background);
+    const { global, fire, expose } = createBackgroundGlobal({ chrome, browser: chrome, importScripts, localStorage, fetch: network.fetch, XMLHttpRequest, location: ownLocation });
     const meta: { url: string; exports?: () => object } = { url: self };
     try {
       code(
@@ -181,8 +172,10 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
         localStorage,
         network.fetch,
         XMLHttpRequest,
+        ownLocation,
         meta,
-      )();
+        // this is the background's global, as at a background script's top level.
+      ).call(global);
     } catch (error) {
       createLogger(`${config.name} background`).error(error);
     }
@@ -216,4 +209,33 @@ export async function startBackground(deps: BackgroundDeps): Promise<{ pause(): 
       void alarms.resume();
     },
   };
+}
+
+/**
+ * The background's chrome object: the namespaces it implements, and, as the background has every API the manifest asks
+ * for, a namespace whose members fail with a named error for any other name (so top-level code that sets one up, such
+ * as chrome.alarms.create(...), doesn't stop the rest of the background). Only a name shaped like a Chrome namespace
+ * gets one: a bundler's interop check (chrome.__esModule) must find nothing, or it takes chrome for an ES module.
+ */
+export function backgroundChrome(known: Record<string, unknown>, log: Logger): Record<string, unknown> {
+  const fallbacks = new Map<string, object>();
+  return new Proxy(known, {
+    get(target, property) {
+      if (typeof property === "symbol" || property in target || !/^[a-z][a-zA-Z\d]*$/.test(property) || property === "then" || property === "toJSON") return Reflect.get(target, property);
+      let namespace = fallbacks.get(property);
+      if (!namespace) fallbacks.set(property, (namespace = withFallback(log, property, {}, "all")));
+      return namespace;
+    },
+  });
+}
+
+/**
+ * The background's own location, not the tab's, as Chrome gives it: libraries tell a background from a content script by
+ * location.pathname. Its service worker's script, its page, or _generated_background_page.html for background scripts.
+ * On a web page a chrome-extension: URL's origin is "null", so origin is spelled out.
+ */
+export function backgroundLocation(id: string, background: { worker: boolean; entry: string }) {
+  const page = background.worker || background.entry.endsWith(".html") ? background.entry : "_generated_background_page.html";
+  const url = new URL(`chrome-extension://${id}/${page}`);
+  return { href: url.href, origin: `chrome-extension://${id}`, protocol: url.protocol, host: url.host, hostname: url.hostname, port: "", pathname: url.pathname, search: "", hash: "", toString: () => url.href };
 }

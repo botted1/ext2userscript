@@ -8,13 +8,13 @@ import { backgroundExtension, files } from "../support/extension.ts";
 describe("emit and convert: the background", () => {
   it("passes the background as a factory whose parameters shadow the background's globals", () => {
     const config = { name: "E", ns: "e", id: "i", manifest: {}, groups: [], assets: {}, locales: {} } satisfies RuntimeConfig;
-    const userscript = emit("// h", "var __x2uRuntime = { start: (c, g, b) => __got(b) };", config, [], { code: "globalThis.__seen = [typeof window, self.tag, __x2uImportMeta.url];", worker: true, entry: "sw.js" });
+    const userscript = emit("// h", "var __x2uRuntime = { start: (c, g, b) => __got(b) };", config, [], { code: "globalThis.__seen = [typeof window, self.tag, __x2uImportMeta.url, location.pathname];", worker: true, entry: "sw.js" });
     let factory: BackgroundCode | undefined;
     new Function("__got", userscript)((b: BackgroundCode) => (factory = b));
     // Inside the factory, globalThis is the parameter: the background's global object.
     const backgroundGlobal: { __seen?: unknown[] } = {};
-    factory?.({}, {}, { tag: "shim" }, backgroundGlobal, undefined, undefined, () => {}, {}, () => {}, undefined, { url: "u" })();
-    assert.deepEqual(backgroundGlobal.__seen, ["undefined", "shim", "u"]);
+    factory?.({}, {}, { tag: "shim" }, backgroundGlobal, undefined, undefined, () => {}, {}, () => {}, undefined, { pathname: "/sw.js" }, { url: "u" })();
+    assert.deepEqual(backgroundGlobal.__seen, ["undefined", "shim", "u", "/sw.js"]);
   });
 
   it("hands the background's top-level declarations to the runtime, live, keeping a leading use strict", () => {
@@ -24,7 +24,7 @@ describe("emit and convert: the background", () => {
     let factory: BackgroundCode | undefined;
     new Function("__got", userscript)((b: BackgroundCode) => (factory = b));
     const meta: { url: string; exports?: () => Record<string, unknown> } = { url: "u" };
-    assert.throws(() => factory?.({}, {}, {}, {}, {}, {}, () => {}, {}, () => {}, undefined, meta)(), /stop/);
+    assert.throws(() => factory?.({}, {}, {}, {}, {}, {}, () => {}, {}, () => {}, undefined, {}, meta)(), /stop/);
     const exported = meta.exports?.() as { count: number; bump(): void; strict: boolean; late: unknown };
     assert.deepEqual([exported.count, exported.strict, exported.late], [1, true, undefined]);
     exported.bump();
