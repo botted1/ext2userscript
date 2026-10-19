@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaseResult, Outcome } from "../../bench/case.ts";
-import { archiveOf, sha256, type CorpusEntry } from "../../bench/corpus.ts";
+import { archiveOf, loadCorpus, sha256, type CorpusEntry } from "../../bench/corpus.ts";
 import { pinEntry } from "../../bench/pin.ts";
 import { copyProfile } from "../../bench/real/managers.ts";
 import { runCase, runCorpus, runReference } from "../../bench/run.ts";
@@ -99,6 +99,21 @@ describe("pinEntry", () => {
     await writeFile(join(dir, `x-${sha256(old).slice(0, 12)}.crx`), old);
     const pinned = await pinEntry(entry("x", "modern", { sha256: sha256(old) }), { dir, download: async () => current });
     assert.deepEqual([pinned.version, pinned.sha256], ["2.0", sha256(current)]);
+  });
+});
+
+describe("the corpus", () => {
+  it("pins 23 cases, 8 legacy, 12 modern and 3 negative, each with its script", async () => {
+    const corpus = await loadCorpus();
+    assert.equal(new Set(corpus.map((c) => c.id)).size, corpus.length);
+    assert.deepEqual(["legacy", "modern", "negative"].map((kind) => corpus.filter((c) => c.kind === kind).length), [8, 12, 3]);
+    for (const c of corpus) {
+      assert.match(c.sha256, /^[0-9a-f]{64}$/, c.id);
+      const bench = (await import(`../../bench/cases/${c.id}.ts`)).default;
+      assert.equal("report" in bench, c.kind === "negative", c.id);
+    }
+    const scripts = (await readdir(new URL("../../bench/cases/", import.meta.url))).map((file) => file.replace(/\.ts$/, ""));
+    assert.deepEqual(scripts.sort(), corpus.map((c) => c.id).sort());
   });
 });
 
