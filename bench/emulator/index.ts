@@ -114,7 +114,8 @@ export async function installEmulator(context: BrowserContext, userscript: strin
   const names = ["GM_info", ...meta.grant.filter((name) => /^GM_\w+$/.test(name))];
   const declarations = names.map((name) => `${name} = __x2uApi.${name}`).join(", ");
   await context.addInitScript({
-    content: `${await bundlePage()}\n__x2uEmuPage.boot(${JSON.stringify(meta)}, function (__x2uApi) {\nvar ${declarations};\n${userscript}\n});`,
+    // Named, as a manager names a userscript in its stack frames: the runtime tells its own frames from the page's by it.
+    content: `${await bundlePage()}\n__x2uEmuPage.boot(${JSON.stringify(meta)}, function (__x2uApi) {\nvar ${declarations};\n${userscript}\n});\n//# sourceURL=x2u-emulator-userscript.js`,
   });
 
   return {

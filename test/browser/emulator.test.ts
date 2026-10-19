@@ -22,6 +22,8 @@ describe("CI emulator", () => {
       "/ab.html": html(),
       "/order.html": html(`<script>document.documentElement.setAttribute("data-page-saw", document.documentElement.getAttribute("data-us") ?? "none")</script>`),
       "/echo": async (request) => Response.json({ body: await request.text() }),
+      // YouTube's rule: scripts need Trusted Types.
+      "/tt.html": () => new Response("<!doctype html><title>t</title>", { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "require-trusted-types-for 'script'" } }),
     });
     other = await startServer({ "/b.html": html() });
   });
@@ -41,6 +43,15 @@ describe("CI emulator", () => {
       await context.close();
     }
   }
+
+  it("puts a GM_addElement script into a page that requires Trusted Types, as the managers do", async () => {
+    const body = `GM_addElement(document.head, "script", { textContent: "document.documentElement.dataset.ran = 'yes'" });`;
+    await withScript({ grant: ["GM_addElement"], runAt: "document-end" }, body, async (context) => {
+      const page = await context.newPage();
+      await page.goto(`${site.origin}/tt.html`);
+      await waitForAttr(page, "data-ran", "yes");
+    });
+  });
 
   it("shares values across pages on different origins", async () => {
     const body = `

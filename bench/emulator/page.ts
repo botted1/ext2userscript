@@ -197,6 +197,17 @@ function parseJson(text: string): unknown {
   }
 }
 
+type ScriptPolicy = { createScript(text: string): string };
+let policy: ScriptPolicy | null | undefined;
+/**
+ * The managers' GM_addElement isn't held to the page's Trusted Types (YouTube requires them for scripts); the
+ * emulator, running in the page's world, is. A policy of its own stands in for that. Null when the page has none.
+ */
+function trusted(): ScriptPolicy | null {
+  policy ??= (window as { trustedTypes?: { createPolicy(name: string, rules: object): ScriptPolicy } }).trustedTypes?.createPolicy("x2u-emulator", { createScript: (text: string) => text }) ?? null;
+  return policy;
+}
+
 function addElement(...args: unknown[]): Element {
   const hasParent = typeof args[0] !== "string";
   const parent = hasParent ? (args[0] as Node | null) : null;
@@ -205,7 +216,7 @@ function addElement(...args: unknown[]): Element {
   const doc = parent === null ? document : parent.nodeType === Node.DOCUMENT_NODE ? (parent as Document) : (parent.ownerDocument ?? document);
   const element = doc.createElement(tag);
   for (const [name, value] of Object.entries(attributes)) {
-    if (name === "textContent") element.textContent = value;
+    if (name === "textContent") element.textContent = (tag === "script" ? trusted()?.createScript(value) : undefined) ?? value;
     else element.setAttribute(name, value);
   }
   const fallback = tag === "script" || tag === "style" || tag === "link" ? doc.head : doc.body;

@@ -144,6 +144,8 @@ Every context is wrapped in one function whose parameters shadow the globals the
   - `DOMParser`: the iframe's, so Trusted Types sees the frame's policy (§6).
 - Background, popup and options: `localStorage`, bound to the extension-wide storage shim (§5.1), so settings don't land in each site's own storage.
 
+The code runs with its global as `this`, as at the top level of a script in Chrome, so a UMD library that puts itself on `globalThis` and one that looks for it on `this` meet. In a manager's world those two differ for a plain call.
+
 Inside that wrapper, code goes in one of two ways.
 
 - **Classic scripts** (`background.scripts`, content script `js[]`, `<script>` without `type="module"`, a classic `service_worker`):
@@ -158,6 +160,11 @@ Inside that wrapper, code goes in one of two ways.
   - A **virtual-fs plugin** resolves every path against the unpacked file map.
   - Dynamic `import()` of a local path is bundled. Dynamic `import()` of a remote URL is reported as unsupported.
   - esbuild bundles to an IIFE, so no `export` statements are left, and the bundle is placed inside the wrapper, whose parameters shadow the globals here too. `import.meta` becomes an object the wrapper passes in, whose `url` is `chrome-extension://<id>/<entry>`; every bundled module sees the entry's URL. In a popup or options page, each module script is its own entry, so its `import.meta.url` is its own file's.
+  - An entry with a top-level `await` can't be an IIFE. It becomes an async function, called at once, whose error is thrown again outside the promise.
+  - In an isolated-world content script, `import(runtime.getURL("<literal>"))` (Vite and CRXJS's way of running ES modules as content scripts) is bundled by esbuild.
+    - Each module becomes an async function in the group's scope, which closes over its `chrome`, as Chrome runs the module in the content script's world.
+    - It runs once per group, with `import.meta.url` `chrome-extension://<id>/<path>`, and resolves to a snapshot of its exports.
+    - A module with remote imports isn't bundled, with a warning.
 - **Output:** one string per context. Nothing is minified unless `--minify` is passed, which runs esbuild's minifier over the final file.
 
 ### 3.4 Analyze
@@ -190,10 +197,13 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 
 ### 3.6 Assets
 - **Collected:** every file referenced from `runtime.getURL` string literals, CSS `url()`, and HTML `src`/`href`/`srcset`, plus all of `web_accessible_resources`. With a background, also the manifest's icons (for notifications), the files it fetches by relative URL, and the style sheets it names (for `insertCSS`). The scripts it names are bundled like content scripts, for `scripting.executeScript({ files })`.
+- **Also collected:** a file the background or a page names by a relative path in a string literal (`"../config/a.config"`, read by XHR), when it exists and isn't code.
 - **Locales:** every `_locales/<locale>/messages.json` goes into the runtime config as parsed JSON, not into the asset table, because `i18n.getMessage` picks the locale in the browser.
-- **Excluded:** files matching `--ignore-assets <glob,...>`.
+- **Excluded:** files matching `--ignore-assets <glob,...>`; and source maps (`*.map`) matched by `web_accessible_resources`, with a warning (one named by `getURL` stays).
 - **Stored:** as base64 in an asset table, with the MIME type taken from the extension.
-- **At runtime:** `runtime.getURL(path)` returns a `blob:` URL. Each URL is created lazily and cached per path.
+- **At runtime:**
+  - `runtime.getURL(path)` returns `blob:<…>#<path>`. Each URL is created lazily and cached per path. The fragment changes no load, and code that reads the URL's text (`.indexOf('.css')`) sees the path, as in Chrome.
+  - `_locales/<locale>/messages.json` is served from the runtime config, rebuilt with its names as the file wrote them.
 - **CSS:** `url()` references inside CSS are rewritten at build time to placeholders, which are replaced with blob URLs at injection time.
 
 ## 4. Userscript header (metadata)
@@ -206,7 +216,7 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 | `exclude_matches` | `@exclude-match` for the patterns every group excludes; the runtime applies the rest |
 | `include_globs` / `exclude_globs` | not in the header; the runtime applies them. An `@include` adds URLs to the `@match` list instead of narrowing it, and an `@exclude` would also hide pages other groups match. |
 | no content scripts at all (popup/background-only extension) | `@match *://*/*`, with the UI reachable through the menu only |
-| host permissions, required and optional | `@connect` per host (`*` when any host will do) |
+| host permissions, required and optional; hosts the code names | `@connect` per host permission's host, then each host the extension's code names (in URL string literals and template heads) that a permission covers, and `*` last when any host will do. Tampermonkey asks before reaching a host `@connect` doesn't name, even under `*`. |
 | earliest `run_at` | `@run-at` |
 | no group with `all_frames: true` | `@noframes` |
 | isolated world | `@inject-into content` (VM), `@sandbox DOM` (TM). Spike S1 verifies GM_* stays available. |
@@ -255,7 +265,7 @@ Every GM call goes through this one file. No other runtime file names a `GM_*` f
 | `runtime.onMessageExternal`, `sendNativeMessage` | unsupported | |
 | `tabs.query` / `get` / `getCurrent` / `sendMessage` / `create` / `update(url)` / `remove` / `reload` | supported | Tab registry (§5.3). `create` uses `gm.openInTab`. `remove` and `update` work by messaging the target tab, which calls `window.close()` or sets `location`. `close` only works for tabs opened by the script; otherwise the report says partial. |
 | `tabs.onUpdated` / `onRemoved` / `onCreated` / `onActivated` | supported | Derived from registry changes. `onActivated` uses `visibilitychange`. |
-| `windows.*` | partial | One synthetic window (id 1) |
+| `windows.*` | partial | One synthetic window (id 1). `create` opens a tab with `gm.openInTab`, so it grants `GM_openInTab`, as `tabs.create` does. |
 | `scripting.executeScript` (`func` or `files`) / `insertCSS` / `removeCSS` | partial | Run in the target tab's top frame via the bus. `files` are bundled at build time. A `func` runs through `new Function`, or, where the page's CSP forbids eval (Tampermonkey's sandbox follows it), in the page's world through `gm.addElement`, without `chrome.*`. |
 | `tabs.executeScript` / `insertCSS` / `removeCSS` (MV2) | partial | Same path as above; `code` that can't be evaluated runs in the page's world with a null result |
 | `alarms.*` | supported | Persisted schedule; fired by the background leader |
@@ -304,6 +314,8 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 - **Handover:** a leader's `pagehide` deletes its registry key and rings the roster (§5.3), so the next-oldest tab takes over at once. A leader that disappears without `pagehide` (crash, tab discard) is replaced once the ghost check (§5.3) finds it, about 1.5 s after the next ring (a tab starting, or one becoming visible or navigating), or when its heartbeat goes stale.
 - **New leader:**
   - It runs the background bundle from the top.
+  - **`location`:** the background gets a `location` of its own: its service worker's script, its page, or `_generated_background_page.html`, with `origin` `chrome-extension://<id>`.
+  - **`chrome`:** its object answers only names shaped like a namespace (`/^[a-z][a-zA-Z\d]*$/`), so `chrome.__esModule` is undefined.
   - An extension with a popup or options page but no background still elects a leader. It runs no code, but keeps the extension's state (menus, alarms, the toolbar button, notifications, permissions) for the pages, which call it there (§5.2).
   - It fires `runtime.onStartup` only for the first leader of a browser session. The leader writes `x2u:<ns>:session` with a timestamp on every beat; a new leader that finds it missing or older than 90s treats the browser as restarted. The same check clears `storage.session` (§5.2).
   - It fires `onInstalled` once per version.
@@ -316,6 +328,10 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
 - `world: "MAIN"` groups, and the common pattern of appending `<script src=runtime.getURL("x.js")>`, run in the page context through `gm.addElement('script', {textContent})`:
   - The runtime patches `Node.prototype.appendChild`, `insertBefore`, `append` and `prepend` in the content context. When one of them inserts a `<script>` whose `src` is one of our asset blob URLs, it swaps in `gm.addElement`.
   - Page-context scripts get no `chrome` object, which matches how real extensions behave.
+- **Trusted Types:**
+  - On a page that requires Trusted Types, Tampermonkey's userscript world (which shares the page's DOM) is held to them; Violentmonkey's isn't.
+  - The runtime wraps the HTML and script-URL sinks in the content context. It passes a string through its own policy, `ext2userscript`, only when the code calling the sink is the userscript's (by its stack frames), so the page's own code stays protected.
+  - Ceiling: a CSP that names its allowed policies refuses the runtime's.
 
 **Revision (S1):** `world: "MAIN"` and `document_start` groups run when the manager starts the userscript, not guaranteed before the page's first scripts. With GM functions granted, the script is isolated whatever the header, so `gm.addElement` is the only route tested into the page world (`@grant unsafeWindow` was not tested). It runs synchronously and gets past a nonce-only CSP on both managers (measured with default manager settings, unpacked builds, on one machine against local pages). The report marks `run_at: document_start` as **partial** ("best-effort: may run after the page's earliest scripts").
 
@@ -390,7 +406,7 @@ Unpack (crx2/crx3 fixtures), manifest normalisation (MV2 and MV3 fixtures, local
 
 ### 10.2 Runtime (Playwright, Chromium)
 - An **emulator** (`bench/emulator`) stands in for TM/VM behind `gm.ts`. It provides exactly the `GM_*` functions in the grant table (a browser test fails if one is missing), so CI runs the real `gm.ts`. Values are shared across all pages in one browser context using the managers' consistency model: each page reads a synchronous local copy, and writes reach other pages asynchronously, firing their value-change listeners with `remote: true`.
-- Playwright injects it through `context.addInitScript` before the converted script. The emulator also enforces `@match`/`@exclude-match` and `@run-at`, but it runs `document-start` scripts before the page's first script, which is stricter than TM and VM (they start 16–46 ms after navigation start, S1). It doesn't bypass the page's CSP the way the managers' `GM_addElement` does, so that bypass is only measured on real managers.
+- Playwright injects it through `context.addInitScript` before the converted script. The emulator also enforces `@match`/`@exclude-match` and `@run-at`, but it runs `document-start` scripts before the page's first script, which is stricter than TM and VM (they start 16–46 ms after navigation start, S1). It doesn't bypass the page's CSP the way the managers' `GM_addElement` does, so that bypass is only measured on real managers. Its `GM_addElement` isn't held to the page's Trusted Types, as the managers' isn't, and its injected script is named `x2u-emulator-userscript.js` in stack frames, as a manager names a userscript.
 - Tests cover:
   - storage plus `onChanged` across two pages;
   - `sendMessage` both ways and `Port` lifetime;
