@@ -6,6 +6,12 @@
 // ponytail: the common sinks only (no document.write, srcdoc, setAttribute or Range); add one if an extension needs it.
 
 type Policy = { createHTML(text: string): unknown; createScriptURL(url: string): unknown };
+
+/**
+ * The wrappers' name in stack frames. It is a method key, so minifying keeps it: a second converted userscript in the
+ * same world wraps these wrappers, and each runtime skips the other's frames to find the code that called the sink.
+ */
+const SINK = "__x2uTrustedSink";
 type Factory = { createPolicy(name: string, rules: object): Policy };
 
 /** The script a stack frame ("    at f (url:1:2)" or "    at url:1:2") belongs to. */
@@ -25,8 +31,15 @@ export function trustExtensionStrings(): void {
   } catch {
     return; // a CSP that names its allowed policies (trusted-types <names>) refuses this one
   }
-  // Called straight from a wrapped sink: frame 1 is this function, 2 the sink and 3 the code that called the sink.
-  const fromExtension = () => frameScript(new Error().stack?.split("\n")[3]) === own;
+  // Called straight from a wrapped sink: frame 1 is this function and 2 the sink. The code that called the sink is the
+  // next frame with a position, past built-ins (Object.assign, Reflect.set) and other runtimes' wrappers.
+  const fromExtension = () => {
+    for (const frame of new Error().stack?.split("\n").slice(3) ?? []) {
+      const script = frame.includes(SINK) ? undefined : frameScript(frame);
+      if (script !== undefined) return script === own;
+    }
+    return false;
+  };
   const html = (text: string) => policy.createHTML(text);
   for (const [proto, name, create] of [
     [Element.prototype, "innerHTML", html],
@@ -39,19 +52,25 @@ export function trustExtensionStrings(): void {
     if (!set) continue;
     Object.defineProperty(proto, name, {
       ...descriptor,
-      set(this: unknown, value: unknown) {
-        set.call(this, typeof value === "string" && fromExtension() ? create(value) : value);
-      },
+      set: {
+        [SINK](this: unknown, value: unknown) {
+          set.call(this, typeof value === "string" && fromExtension() ? create(value) : value);
+        },
+      }[SINK],
     });
   }
   const insertAdjacentHTML = Element.prototype.insertAdjacentHTML;
-  Element.prototype.insertAdjacentHTML = function (this: Element, position: InsertPosition, text: string) {
-    insertAdjacentHTML.call(this, position, (typeof text === "string" && fromExtension() ? html(text) : text) as string);
-  };
+  Element.prototype.insertAdjacentHTML = {
+    [SINK](this: Element, position: InsertPosition, text: string) {
+      insertAdjacentHTML.call(this, position, (typeof text === "string" && fromExtension() ? html(text) : text) as string);
+    },
+  }[SINK];
   const parseFromString = DOMParser.prototype.parseFromString;
-  DOMParser.prototype.parseFromString = function (this: DOMParser, text: string, type: DOMParserSupportedType) {
-    return parseFromString.call(this, (typeof text === "string" && fromExtension() ? html(text) : text) as string, type);
-  };
+  DOMParser.prototype.parseFromString = {
+    [SINK](this: DOMParser, text: string, type: DOMParserSupportedType) {
+      return parseFromString.call(this, (typeof text === "string" && fromExtension() ? html(text) : text) as string, type);
+    },
+  }[SINK];
 }
 
 /** Whether an HTML string throws here, on an element that isn't in the page. */

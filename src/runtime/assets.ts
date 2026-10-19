@@ -10,6 +10,9 @@ const PLACEHOLDER = /x2u-asset:([^"')\s]+)/g;
 /** getURL's argument as a path in the asset table: leading slashes, ./ and any query or fragment are dropped. */
 const toPath = (url: string) => url.replace(/[?#].*$/, "").split("/").filter((part) => part !== "" && part !== ".").join("/");
 
+/** Types whose URLs code extends with a fragment of its own. */
+const FRAGMENT_ADDRESSED = /^(?:image\/svg\+xml|audio\/|video\/|application\/pdf)/;
+
 const decode = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
 export function createAssets(table: AssetTable, id: string, getMessage: (name: string) => string, log: Logger, locales: Record<string, Messages> = {}) {
@@ -42,8 +45,9 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
       }
       const blobUrl = URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
       // The file's path rides along as the fragment, which loading ignores: code that reads the URL's text (does it
-      // end in .css?) sees the path there, as it would in Chrome's chrome-extension://<id>/<path>.
-      assetUrl = `${blobUrl}#${encodeURI(path)}`;
+      // end in .css?) sees the path there, as it would in Chrome's chrome-extension://<id>/<path>. Not for the files a
+      // fragment addresses (an SVG sprite's #icon, a video's #t=10, a PDF's #page=2): their code adds its own.
+      assetUrl = FRAGMENT_ADDRESSED.test(file.type) ? blobUrl : `${blobUrl}#${encodeURI(path)}`;
       urls.set(path, assetUrl);
       paths.set(blobUrl, path);
     }

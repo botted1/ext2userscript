@@ -59,6 +59,8 @@ export async function bundleModule(esbuild: EsbuildApi, files: ExtensionFiles, e
   const result = await build("esm", "es2022");
   const fn = asyncFunction(result.outputFiles[0].text);
   if (options.format === "function") return { code: fn, remoteImports };
+  // Its remote imports would be import statements inside a function, which stop the whole userscript from parsing.
+  if (remoteImports.length > 0) throw new Error(`convert: ${entry} has a top-level await and imports ${remoteImports.join(", ")}: remote modules can't be bundled`);
   // An IIFE can't hold a top-level await, so this entry runs in an async function instead, and an error it throws is
   // thrown again outside the promise, as a failed module's is uncaught.
   return { code: `(${fn})(__x2uImportMeta).catch((error) => setTimeout(() => {\n  throw error;\n}));\n`, remoteImports };

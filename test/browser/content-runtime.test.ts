@@ -157,6 +157,7 @@ for (const backend of backends) {
       await waitForAttr(tab, "data-inject-loaded", "1");
       assert.equal(await readAttr(tab, "data-injected"), "page");
       assert.equal(await tab.locator("#ext-html").count(), 1);
+      await waitForAttr(tab, "data-assigned", "1");
       await waitForAttr(tab, "data-page-after", "blocked");
     });
 

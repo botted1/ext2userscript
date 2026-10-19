@@ -408,6 +408,8 @@ export function trustedTypesExtension(origin: string): ExtensionFiles {
       script.src = chrome.runtime.getURL("inject.js");
       script.onload = () => (document.documentElement.dataset.injectLoaded = "1");
       document.documentElement.appendChild(script);
+      Object.assign(document.createElement("div"), { innerHTML: "<i>through a built-in</i>" });
+      document.documentElement.dataset.assigned = "1";
       document.documentElement.dataset.extDone = "1";
     `,
     "inject.js": `document.documentElement.dataset.injected = "page";`,

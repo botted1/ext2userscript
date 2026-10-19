@@ -77,6 +77,12 @@ describe("bundleModule", () => {
     assert.deepEqual({ ...namespace }, { url: "chrome-extension://id/m.js", default: 7, also: "chrome-extension://id/m.js" });
   });
 
+  it("refuses a top-level await next to a remote import, which would leave an import statement inside a function", async () => {
+    const esbuild = await loadEsbuild();
+    const all = files({ "bg.js": 'import { x } from "https://cdn.example.com/lib.js";\nconsole.log(x, await Promise.resolve(1));' });
+    await assert.rejects(bundleModule(esbuild, all, "bg.js", { format: "iife" }), /bg\.js has a top-level await and imports https:\/\/cdn\.example\.com\/lib\.js: remote modules can't be bundled/);
+  });
+
   it("finds a module's exports when license comments follow them, as esbuild writes them at the end", async () => {
     const esbuild = await loadEsbuild();
     const { code } = await bundleModule(esbuild, files({ "m.js": "/*! Licensed under MIT */\nexport const answer = 42;" }), "m.js", { format: "function" });

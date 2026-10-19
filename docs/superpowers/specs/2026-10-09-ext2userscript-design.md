@@ -160,7 +160,7 @@ Inside that wrapper, code goes in one of two ways.
   - A **virtual-fs plugin** resolves every path against the unpacked file map.
   - Dynamic `import()` of a local path is bundled. Dynamic `import()` of a remote URL is reported as unsupported.
   - esbuild bundles to an IIFE, so no `export` statements are left, and the bundle is placed inside the wrapper, whose parameters shadow the globals here too. `import.meta` becomes an object the wrapper passes in, whose `url` is `chrome-extension://<id>/<entry>`; every bundled module sees the entry's URL. In a popup or options page, each module script is its own entry, so its `import.meta.url` is its own file's.
-  - An entry with a top-level `await` can't be an IIFE. It becomes an async function, called at once, whose error is thrown again outside the promise.
+  - An entry with a top-level `await` can't be an IIFE. It becomes an async function, called at once, whose error is thrown again outside the promise. One that also imports a remote module fails the conversion, naming it: the import would be a statement inside a function, which would stop the whole userscript from parsing.
   - In an isolated-world content script, `import(runtime.getURL("<literal>"))` (Vite and CRXJS's way of running ES modules as content scripts) is bundled by esbuild.
     - Each module becomes an async function in the group's scope, which closes over its `chrome`, as Chrome runs the module in the content script's world.
     - It runs once per group, with `import.meta.url` `chrome-extension://<id>/<path>`, and resolves to a snapshot of its exports.
@@ -202,7 +202,7 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 - **Excluded:** files matching `--ignore-assets <glob,...>`; and source maps (`*.map`) matched by `web_accessible_resources`, with a warning (one named by `getURL` stays).
 - **Stored:** as base64 in an asset table, with the MIME type taken from the extension.
 - **At runtime:**
-  - `runtime.getURL(path)` returns `blob:<…>#<path>`. Each URL is created lazily and cached per path. The fragment changes no load, and code that reads the URL's text (`.indexOf('.css')`) sees the path, as in Chrome.
+  - `runtime.getURL(path)` returns `blob:<…>#<path>`. Each URL is created lazily and cached per path. The fragment changes no load, and code that reads the URL's text (`.indexOf('.css')`) sees the path, as in Chrome. SVG, audio, video and PDF files get a bare `blob:` URL, because their code adds a fragment of its own (`#icon`, `#t=10`, `#page=2`).
   - `_locales/<locale>/messages.json` is served from the runtime config, rebuilt with its names as the file wrote them.
 - **CSS:** `url()` references inside CSS are rewritten at build time to placeholders, which are replaced with blob URLs at injection time.
 
@@ -330,7 +330,7 @@ Network: `fetch` and `XMLHttpRequest` in the background and content contexts are
   - Page-context scripts get no `chrome` object, which matches how real extensions behave.
 - **Trusted Types:**
   - On a page that requires Trusted Types, Tampermonkey's userscript world (which shares the page's DOM) is held to them; Violentmonkey's isn't.
-  - The runtime wraps the HTML and script-URL sinks in the content context. It passes a string through its own policy, `ext2userscript`, only when the code calling the sink is the userscript's (by its stack frames), so the page's own code stays protected.
+  - The runtime wraps the HTML and script-URL sinks in the content context. It passes a string through its own policy, `ext2userscript`, only when the code calling the sink is the userscript's (by its stack frames), so the page's own code stays protected. The caller is the first frame with a position past the sink, skipping built-ins (`Object.assign`) and another converted userscript's wrappers, which share the page's prototypes under Tampermonkey.
   - Ceiling: a CSP that names its allowed policies refuses the runtime's.
 
 **Revision (S1):** `world: "MAIN"` and `document_start` groups run when the manager starts the userscript, not guaranteed before the page's first scripts. With GM functions granted, the script is isolated whatever the header, so `gm.addElement` is the only route tested into the page world (`@grant unsafeWindow` was not tested). It runs synchronously and gets past a nonce-only CSP on both managers (measured with default manager settings, unpacked builds, on one machine against local pages). The report marks `run_at: document_start` as **partial** ("best-effort: may run after the page's earliest scripts").

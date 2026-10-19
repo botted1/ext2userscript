@@ -246,6 +246,15 @@ describe("createAssets", () => {
     assert.equal(await fetch(`${url}?v=2`).then((response) => response.text()), "a{}");
   });
 
+  it("leaves the fragment to the code for the files a fragment addresses: SVG sprites, media and PDFs", () => {
+    const assets = createAssets({ ...table, "icons.svg": ["image/svg+xml", btoa("<svg/>")], "a.mp4": ["video/mp4", ""] }, "id", () => "", recorder());
+    for (const path of ["icons.svg", "a.mp4"]) {
+      const url = assets.url(path);
+      assert.match(url, /^blob:[^#]+$/, path);
+      assert.equal(assets.pathOf(`${url}#close`), path);
+    }
+  });
+
   it("serves a locale's messages.json from the runtime config, with the names as the file wrote them", async () => {
     const locales = { en: { appname: { name: "appName", message: "My App" }, desc: { message: "Does $1$", placeholders: { one: { content: "$1" } } } } };
     const assets = createAssets(table, "id", () => "", recorder(), locales);
