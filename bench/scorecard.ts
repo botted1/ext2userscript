@@ -2,7 +2,7 @@
 import type { CaseResult, Outcome } from "./case.ts";
 
 export type Criteria = {
-  /** Cases the baseline passes that ext2userscript passes too, of all it passes. */
+  /** Cases the baseline passes that ext2userscript passes too, of all it passes (at least one, or it didn't run). */
   matched: [number, number];
   /** Modern cases the baseline fails that ext2userscript passes, of all it fails. */
   modern: [number, number];
@@ -14,6 +14,8 @@ export type Criteria = {
 };
 
 const passes = (outcome: Outcome) => outcome.result === "pass";
+/** Every case the baseline passes, ext2userscript passes too. A run where it passed none (it didn't run) can't say. */
+const matchedAll = ([n, of]: [number, number]) => of > 0 && n === of;
 
 export function criteria(results: readonly CaseResult[]): Criteria {
   const inconclusive = results.filter((result) => result.reference.result === "fail").map((result) => result.entry.id);
@@ -25,7 +27,7 @@ export function criteria(results: readonly CaseResult[]): Criteria {
   const modern: [number, number] = [failed.filter((result) => passes(result.outcomes.ext2userscript)).length, failed.length];
   const negative = counted.filter((result) => result.entry.kind === "negative");
   const negatives: [number, number] = [negative.filter((result) => passes(result.outcomes.ext2userscript)).length, negative.length];
-  const met = matched[0] === matched[1] && modern[0] >= 0.75 * modern[1] && negatives[0] === negatives[1] && inconclusive.length === 0;
+  const met = matchedAll(matched) && modern[0] >= 0.75 * modern[1] && negatives[0] === negatives[1] && inconclusive.length === 0;
   return { matched, modern, negatives, inconclusive, met };
 }
 
@@ -52,7 +54,7 @@ export function scorecard(results: readonly CaseResult[], meta: { backend: strin
     "",
     "## Ship criteria (spec §1)",
     "",
-    `- ${box(c.matched[0] === c.matched[1])} Passes every case the baseline passes: ${percent(c.matched)}`,
+    `- ${box(matchedAll(c.matched))} Passes every case the baseline passes: ${percent(c.matched)}`,
     `- ${box(c.modern[0] >= 0.75 * c.modern[1])} Passes at least 75% of the modern cases the baseline fails: ${percent(c.modern)}`,
     `- ${box(c.negatives[0] === c.negatives[1])} An accurate report for every negative case: ${percent(c.negatives)}`,
     `- ${box(c.inconclusive.length === 0)} Every case conclusive (the original extension passes it): ${c.inconclusive.length === 0 ? "all" : `not ${c.inconclusive.join(", ")}`}`,

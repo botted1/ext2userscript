@@ -31,7 +31,21 @@ export async function loadCorpus(path = join(import.meta.dirname, "corpus.json")
   return (JSON.parse(await readFile(path, "utf8")) as { cases: CorpusEntry[] }).cases;
 }
 
-export const storeOf = (entry: CorpusEntry): StoreSource =>
+/**
+ * The cases a command runs: all of them, or those `--case id[,id…]` names. An id the corpus doesn't have is an error,
+ * as is `--gate` on part of the corpus, so a typo can't pass the gate on no cases.
+ */
+export function selectCases(corpus: readonly CorpusEntry[], args: readonly string[]): CorpusEntry[] {
+  if (!args.includes("--case")) return [...corpus];
+  const ids = (args[args.indexOf("--case") + 1] ?? "").split(",").filter(Boolean);
+  if (ids.length === 0) throw new Error("--case needs case ids, like --case json-formatter,dark-reader");
+  const unknown = ids.filter((id) => !corpus.some((entry) => entry.id === id));
+  if (unknown.length > 0) throw new Error(`No case ${unknown.join(", ")} in bench/corpus.json`);
+  if (args.includes("--gate")) throw new Error("--gate judges the whole corpus: leave out --case");
+  return corpus.filter((entry) => ids.includes(entry.id));
+}
+
+export const storeOf =(entry: CorpusEntry): StoreSource =>
   entry.store === "amo" ? { kind: "amo", slug: entry.extensionId } : { kind: entry.store, id: entry.extensionId };
 
 export const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");

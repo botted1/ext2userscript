@@ -4,10 +4,11 @@ import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaseResult, Outcome } from "../../bench/case.ts";
-import { archiveOf, loadCorpus, sha256, type CorpusEntry } from "../../bench/corpus.ts";
+import type { BrowserContext } from "playwright";
+import { archiveOf, loadCorpus, selectCases, sha256, type CorpusEntry } from "../../bench/corpus.ts";
 import { pinEntry } from "../../bench/pin.ts";
 import { copyProfile } from "../../bench/real/managers.ts";
-import { runCase, runCorpus, runReference } from "../../bench/run.ts";
+import { check, runCase, runCorpus, runReference } from "../../bench/run.ts";
 import { criteria, scorecard } from "../../bench/scorecard.ts";
 import { files, zipFiles } from "../support/extension.ts";
 
@@ -36,9 +37,17 @@ describe("criteria", () => {
   });
 
   it("is met at 75% of the modern cases the baseline fails, and not below", () => {
-    const modern = (passed: number) => Array.from({ length: 4 }, (_, i) => result(`m${i}`, "modern", i < passed ? PASS : FAIL, FAIL));
+    const modern = (passed: number) => [result("l", "legacy", PASS, PASS), ...Array.from({ length: 4 }, (_, i) => result(`m${i}`, "modern", i < passed ? PASS : FAIL, FAIL))];
     assert.equal(criteria(modern(3)).met, true);
     assert.equal(criteria(modern(2)).met, false);
+  });
+
+  it("isn't met when the baseline passes no case, as when it never ran", () => {
+    const broken: Outcome = { result: "fail", detail: "conversion failed: npm error code ENOENT" };
+    const results = [result("l1", "legacy", FAIL, broken), ...["m1", "m2", "m3", "m4"].map((id) => result(id, "modern", PASS, broken))];
+    const c = criteria(results);
+    assert.deepEqual([c.matched, c.modern, c.met], [[0, 0], [4, 4], false]);
+    assert.match(scorecard(results, { backend: "emulator", baseline: "0.1.4", commit: "abc1234", date: "2026-10-19" }), /- \[ \] Passes every case the baseline passes: none to count/);
   });
 
   it("leaves out a case the original extension fails, and isn't met while one is inconclusive", () => {
@@ -166,6 +175,40 @@ describe("runCase on a browser case", () => {
     const outcome = await runCase("ext2userscript", entry("b", "modern"), { path: "", bytes, version: "1", sha256: "", drifted: false }, { run: async () => {} }, "emulator");
     assert.equal(outcome.result, "fail");
     assert.match(outcome.detail ?? "", /^conversion failed: Build failed with 1 error: .*\.\/missing\.js \(imported from bg\.js\) is not in the extension$/);
+  });
+});
+
+describe("runCase with the baseline", () => {
+  it("fails when the baseline can't run, with npm's reason and not just the command", async (t) => {
+    const before = process.env.X2U_BASELINE;
+    t.after(() => (before === undefined ? delete process.env.X2U_BASELINE : (process.env.X2U_BASELINE = before)));
+    process.env.X2U_BASELINE = "file:/nonexistent/x2u";
+    const outcome = await runCase("baseline", entry("t", "modern"), { path: "/nonexistent/t.crx", bytes: new Uint8Array(), version: "1", sha256: "", drifted: false }, { run: async () => {} }, "emulator");
+    assert.equal(outcome.result, "fail");
+    assert.match(outcome.detail ?? "", /^conversion failed: npm error code ENOENT .*\/nonexistent\/x2u\/package\.json/);
+  });
+});
+
+describe("check", () => {
+  it("gives the case's outcome even when closing its session fails", async () => {
+    const session = { context: { on() {} } as unknown as BrowserContext, close: async () => { throw new Error("Target closed"); } };
+    assert.deepEqual(await check({ run: async () => { throw new Error("no effect"); } }, session), { result: "fail", detail: "no effect" });
+  });
+});
+
+describe("selectCases", () => {
+  const corpus = [entry("a", "legacy"), entry("b", "modern")];
+
+  it("runs the whole corpus, or the cases --case names", () => {
+    assert.deepEqual(selectCases(corpus, []).map((c) => c.id), ["a", "b"]);
+    assert.deepEqual(selectCases(corpus, ["--case", "b"]).map((c) => c.id), ["b"]);
+  });
+
+  it("refuses ids the corpus doesn't have, and a gate on part of the corpus", () => {
+    assert.throws(() => selectCases(corpus, ["--case", "a,c,d"]), /^Error: No case c, d in bench\/corpus\.json$/);
+    assert.throws(() => selectCases(corpus, ["--case", "--gate"]), /^Error: No case --gate in bench\/corpus\.json$/);
+    assert.throws(() => selectCases(corpus, ["--case"]), /^Error: --case needs case ids, like --case json-formatter,dark-reader$/);
+    assert.throws(() => selectCases(corpus, ["--gate", "--case", "a"]), /^Error: --gate judges the whole corpus: leave out --case$/);
   });
 });
 

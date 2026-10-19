@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import type { BrowserContext } from "playwright";
 import type { Report } from "../src/convert/report.ts";
 import { TOOLS, type BenchCase, type BrowserCase, type CaseResult, type Outcome, type Tool } from "./case.ts";
-import { archiveOf, CACHE, loadCorpus, type Archive, type CorpusEntry } from "./corpus.ts";
+import { archiveOf, CACHE, loadCorpus, selectCases, type Archive, type CorpusEntry } from "./corpus.ts";
 import { startReference } from "./reference.ts";
 import { criteria, scorecard } from "./scorecard.ts";
 import { backendsFromEnv, startSession, type Backend, type Session } from "./session.ts";
@@ -55,7 +55,8 @@ export async function check(bench: BrowserCase, session: Session): Promise<Outco
   } catch (error) {
     return { result: "fail", detail: firstLine(error) + (errors.length > 0 ? ` (first page error: ${errors[0]})` : "") };
   } finally {
-    await session.close();
+    // A browser that crashed can fail to close: the case's outcome matters more, and the run must go on.
+    await session.close().catch(() => {});
   }
 }
 
@@ -136,13 +137,12 @@ export async function runCorpus(
 
 if (process.argv[1] === import.meta.filename) {
   const args = process.argv.slice(2);
-  const only = args.includes("--case") ? args[args.indexOf("--case") + 1]?.split(",") : undefined;
+  const entries = selectCases(await loadCorpus(), args);
   const commit = await promisify(execFile)("git", ["rev-parse", "--short", "HEAD"]).then(({ stdout }) => stdout.trim(), () => "(not a git checkout)");
   const baseline = await baselineVersion();
   const date = new Date().toISOString().slice(0, 10);
   let met = true;
   await mkdir(CACHE, { recursive: true });
-  const entries = (await loadCorpus()).filter((entry) => !only || only.includes(entry.id));
   for (const [backend, results] of await runCorpus(backendsFromEnv(), entries)) {
     const card = scorecard(results, { backend, baseline, commit, date });
     await writeFile(join(CACHE, `scorecard-${backend}.md`), card);

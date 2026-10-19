@@ -37,7 +37,13 @@ export async function convertWith(tool: Tool, entry: CorpusEntry, archive: Archi
   const dir = await mkdtemp(join(tmpdir(), "x2u-base-"));
   try {
     const out = join(dir, `${entry.id}.user.js`);
-    await run("npx", ["--yes", baselineSpec(), "convert", archive.path, "-o", out, "--no-minify", "--force"], { timeout: 300_000, maxBuffer: 64 * 1024 * 1024 });
+    await run("npx", ["--yes", baselineSpec(), "convert", archive.path, "-o", out, "--no-minify", "--force"], { timeout: 300_000, maxBuffer: 64 * 1024 * 1024 }).catch(
+      (error: Error & { stderr?: string; killed?: boolean }) => {
+        // The error's message is only the command: the reason is in what npx or the baseline wrote to stderr.
+        const said = (error.stderr ?? "").split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
+        throw new Error(error.killed ? "the baseline took more than 300 s" : said || error.message);
+      },
+    );
     return { userscript: await readFile(out, "utf8") };
   } finally {
     await rm(dir, { recursive: true, force: true });

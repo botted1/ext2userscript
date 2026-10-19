@@ -2,7 +2,7 @@
 // Usage: npm run bench:pin [-- --case id[,id…]]
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { archiveOf, type CorpusEntry } from "./corpus.ts";
+import { archiveOf, selectCases, type CorpusEntry } from "./corpus.ts";
 
 /** The entry pinned to the store's current archive, which archiveOf downloads and caches. */
 export async function pinEntry(entry: CorpusEntry, options: Parameters<typeof archiveOf>[1] = {}): Promise<CorpusEntry> {
@@ -11,12 +11,11 @@ export async function pinEntry(entry: CorpusEntry, options: Parameters<typeof ar
 }
 
 if (process.argv[1] === import.meta.filename) {
-  const args = process.argv.slice(2);
-  const only = args.includes("--case") ? args[args.indexOf("--case") + 1]?.split(",") : undefined;
   const path = join(import.meta.dirname, "corpus.json");
   const corpus = JSON.parse(await readFile(path, "utf8")) as { cases: CorpusEntry[] };
+  const selected = selectCases(corpus.cases, process.argv.slice(2));
   for (const [i, entry] of corpus.cases.entries()) {
-    if (only && !only.includes(entry.id)) continue;
+    if (!selected.includes(entry)) continue;
     const pinned = await pinEntry(entry);
     corpus.cases[i] = pinned;
     console.log(`${entry.id}: ${pinned.version}${pinned.sha256 === entry.sha256 ? " (unchanged)" : ` (was ${entry.version})`}`);
