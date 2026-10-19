@@ -72,4 +72,13 @@ describe("collectAssets", () => {
     assert.deepEqual(result.css, [[]]);
     assert.deepEqual(result.warnings, ["content_scripts[0].css: gone.css isn't in the extension"]);
   });
+
+  it("leaves source maps out of web_accessible_resources globs, saying so, but keeps one the code names", () => {
+    const { model, files: all } = extension({ web_accessible_resources: [{ resources: ["js/*", "*.map"], matches: ["<all_urls>"] }] }, {
+      "js/a.js": "a", "js/a.js.map": "{}", "b.js.map": "{}", "c.js.map": "{}",
+    });
+    const { table, warnings } = collectAssets(model, all, ["c.js.map"]);
+    assert.deepEqual(Object.keys(table), ["c.js.map", "js/a.js"]);
+    assert.deepEqual(warnings, ["2 source maps (*.map) in web_accessible_resources left out: only developer tools read them"]);
+  });
 });

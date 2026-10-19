@@ -80,4 +80,9 @@ describe("scan", () => {
     assert.deepEqual(imports.map((call) => call.path), ["assets/a.js", "b.js", undefined, undefined]);
     assert.equal(code.slice(imports[0].start, imports[0].end), 'import(chrome.runtime.getURL("assets/a.js"))');
   });
+
+  it("finds string literals shaped like a relative file's path", () => {
+    const { paths } = scan('x.open("GET", "../config/a.config"); load("data/b.json"); "icon.png"; "plain words"; "https://a.test/c.json"');
+    assert.deepEqual(paths, ["../config/a.config", "data/b.json", "icon.png"]);
+  });
 });

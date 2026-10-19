@@ -15,6 +15,8 @@ export type ScanResult = {
   fetches: string[];
   /** String literals that look like a script or style sheet's path ("content.js", "/css/a.css"): files a background may inject. */
   files: string[];
+  /** String literals that look like a relative file's path ("../config/a.config", "data/b.json"): files the code may read. */
+  paths: string[];
   dynamicImport: boolean;
   /** import(...) calls: where each is, and the file when its argument is runtime.getURL("<literal>") (an extension file). */
   imports: Array<{ start: number; end: number; path?: string }>;
@@ -47,7 +49,7 @@ const SITE_GLOBALS = new Set(["indexedDB", "sessionStorage", "customElements"]);
 
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
-  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], dynamicImport: false, imports: [], importScripts: [], lexical: [], declarations: [], globals: [] };
+  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], paths: [], dynamicImport: false, imports: [], importScripts: [], lexical: [], declarations: [], globals: [] };
   const declare = (name: string) => void (result.declarations.includes(name) || result.declarations.push(name));
   const isDot = (token: Token | undefined) => token?.kind === "punct" && (token.value === "." || token.value === "?.");
   let brackets = 0; // open ( and [
@@ -58,6 +60,7 @@ export function scan(code: string): ScanResult {
     if (token.kind === "punct" && (token.value === "(" || token.value === "[")) brackets++;
     else if (token.kind === "punct" && (token.value === ")" || token.value === "]")) brackets--;
     if (token.kind === "string" && /^\/?[\w@~.-]+(?:\/[\w@~.-]+)*\.(?:js|css)$/.test(token.value)) result.files.push(token.value);
+    if (token.kind === "string" && /^(?:\.\.?\/)*\/?[\w@~-][\w@~.-]*(?:\/[\w@~.-]+)*\.[a-z\d]{1,10}$/i.test(token.value)) result.paths.push(token.value);
     if (token.kind !== "name") continue;
     if (token.depth === 0 && brackets === 0 && !isDot(tokens[i - 1])) {
       const next = tokens[i + 1];

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadEsbuild } from "../../src/convert/esbuild-node.ts";
 import { convert, inspect } from "../../src/convert/index.ts";
-import { pagesExtension, plainExtension, sampleExtension } from "../support/extension.ts";
+import { files, pagesExtension, plainExtension, sampleExtension } from "../support/extension.ts";
 
 const origin = "http://127.0.0.1:4567";
 /** A stand-in for the built runtime: convert() only embeds it. */
@@ -66,6 +66,18 @@ describe("convert", () => {
     const derived = (await convert(plainExtension(), { runtime })).report.extension.id;
     assert.match(derived ?? "", /^[a-p]{32}$/);
     assert.equal((await convert(plainExtension(), { runtime })).report.extension.id, derived, "the same input gives the same ID");
+  });
+
+  it("puts the data files a background names by a relative path in the asset table, but not code", async () => {
+    const all = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "D", version: "1", background: { service_worker: "bg/index.js" } }),
+      "bg/index.js": 'const CONFIG = { local: "../config/sites.config", lib: "../lib/x.js" }; xhr.open("GET", CONFIG.local);',
+      "config/sites.config": "a.test",
+      "lib/x.js": "var x;",
+    });
+    const { userscript } = await convert(all, { runtime });
+    const config = JSON.parse(/__x2uRuntime\.start\((\{.*?\}), \[\n/s.exec(userscript)?.[1] ?? "{}");
+    assert.deepEqual(Object.keys(config.assets), ["config/sites.config"]);
   });
 });
 

@@ -49,10 +49,18 @@ export function collectAssets(model: Model, files: ExtensionFiles, getUrls: read
   }
   // The extension's icons, which a background's notifications usually show.
   if (model.background) for (const path of Object.values(model.icons)) include(path, "icons");
+  // Source maps are web-accessible for the page's developer tools; no extension code reads them, and they can be most
+  // of an archive (Augmented Steam's are 100 MB). One the code names by getURL stays in.
+  const sourceMaps = new Set<string>();
   for (const resource of model.webAccessibleResources) {
     const glob = pathGlob(resource);
-    for (const path of files.keys()) if (glob.test(path) && !ignored.some((ignore) => ignore.test(path))) wanted.add(path);
+    for (const path of files.keys()) {
+      if (!glob.test(path) || ignored.some((ignore) => ignore.test(path)) || wanted.has(path)) continue;
+      if (path.endsWith(".map")) sourceMaps.add(path);
+      else wanted.add(path);
+    }
   }
+  if (sourceMaps.size > 0) warnings.push(`${sourceMaps.size} source map${sourceMaps.size === 1 ? "" : "s"} (*.map) in web_accessible_resources left out: only developer tools read them`);
   const css = model.contentScripts.map((group, i) =>
     group.css.flatMap((path) => {
       const bytes = files.get(path);

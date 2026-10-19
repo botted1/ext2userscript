@@ -74,9 +74,11 @@ async function prepare(
     ...scans.flatMap((result) => result?.urls ?? []),
     ...(backgroundScan?.urls ?? []),
     ...backgroundFiles(backgroundScan?.fetches ?? [], background.background?.entry, files),
+    // Data files it reads by a relative URL some other way (an XHR, a computed fetch): code is bundled, not served.
+    ...backgroundFiles(backgroundScan?.paths ?? [], background.background?.entry, files).filter((path) => !CODE.test(path)),
     ...injectable.filter((path) => path.endsWith(".css")),
     // What the pages show, and the files their code names or fetches by a URL relative to the page.
-    ...pages.flatMap((page, i) => [...page.assets, ...pageScans[i].urls, ...backgroundFiles(pageScans[i].fetches, page.config.path, files)]),
+    ...pages.flatMap((page, i) => [...page.assets, ...pageScans[i].urls, ...backgroundFiles(pageScans[i].fetches, page.config.path, files), ...backgroundFiles(pageScans[i].paths, page.config.path, files).filter((path) => !CODE.test(path))]),
   ];
   const assets = collectAssets(model, files, getUrls, options.ignoreAssets);
   const id = options.extensionId ?? (model.key ? await chromeId(base64Bytes(model.key)) : undefined) ?? model.geckoId ?? (await chromeId(new TextEncoder().encode(model.name)));
@@ -114,6 +116,9 @@ async function prepare(
   };
   return { header: renderMetadata(model, files, ns, grantsFor(methods)), config, code, background: background.background, injectables, pages, report };
 }
+
+/** Script files, which are bundled rather than served as assets. */
+const CODE = /\.(?:js|mjs|cjs)$/i;
 
 /** The extension files a background fetches by relative URL, which resolve against its own file. Others are left out quietly. */
 function backgroundFiles(urls: readonly string[], entry: string | undefined, files: ExtensionFiles): string[] {
