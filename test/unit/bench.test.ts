@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { CaseResult, Outcome } from "../../bench/case.ts";
 import { archiveOf, sha256, type CorpusEntry } from "../../bench/corpus.ts";
 import { pinEntry } from "../../bench/pin.ts";
+import { runCase, runCorpus, runReference } from "../../bench/run.ts";
 import { criteria, scorecard } from "../../bench/scorecard.ts";
 import { files, zipFiles } from "../support/extension.ts";
 
@@ -97,5 +98,55 @@ describe("pinEntry", () => {
     await writeFile(join(dir, `x-${sha256(old).slice(0, 12)}.crx`), old);
     const pinned = await pinEntry(entry("x", "modern", { sha256: sha256(old) }), { dir, download: async () => current });
     assert.deepEqual([pinned.version, pinned.sha256], ["2.0", sha256(current)]);
+  });
+});
+
+describe("runReference", () => {
+  it("is n/a for a negative case and for Manifest V2, without starting a browser", async () => {
+    const mv2 = zipFiles(files({ "manifest.json": JSON.stringify({ name: "A", version: "1", manifest_version: 2 }) }));
+    const archive2 = { path: "", bytes: mv2, version: "1", sha256: "", drifted: false };
+    assert.deepEqual(await runReference(archive2, { report: { verdict: "unlikely", subjects: [] } }), { result: "n/a" });
+    assert.deepEqual(await runReference(archive2, { run: async () => {} }), { result: "n/a", detail: "Manifest V2" });
+  });
+});
+
+describe("runCase on a negative case", () => {
+  const devtools = zipFiles(files({ "manifest.json": JSON.stringify({ name: "D", version: "1", manifest_version: 3, devtools_page: "d.html" }), "d.html": "<!doctype html>" }));
+  const archiveD = { path: "", bytes: devtools, version: "1", sha256: "", drifted: false };
+
+  it("passes when the report is unlikely and names each subject as unsupported, and is n/a for the baseline", async () => {
+    const bench = { report: { verdict: "unlikely" as const, subjects: ["manifest.devtools_page"] } };
+    assert.deepEqual(await runCase("ext2userscript", entry("d", "negative"), archiveD, bench, "emulator"), { result: "pass" });
+    assert.deepEqual(await runCase("baseline", entry("d", "negative"), archiveD, bench, "emulator"), { result: "n/a" });
+  });
+
+  it("fails, naming what the report misses", async () => {
+    const bench = { report: { verdict: "unlikely" as const, subjects: ["manifest.devtools_page", "manifest.chrome_url_overrides"] } };
+    assert.deepEqual(await runCase("ext2userscript", entry("d", "negative"), archiveD, bench, "emulator"), {
+      result: "fail",
+      detail: "the report doesn't name manifest.chrome_url_overrides as unsupported",
+    });
+  });
+});
+
+describe("runCase on a browser case", () => {
+  it("fails when the conversion does, with the build's error and not just its heading", async () => {
+    const manifest = { name: "B", version: "1", manifest_version: 3, background: { service_worker: "bg.js", type: "module" } };
+    const bytes = zipFiles(files({ "manifest.json": JSON.stringify(manifest), "bg.js": `import "./missing.js";` }));
+    const outcome = await runCase("ext2userscript", entry("b", "modern"), { path: "", bytes, version: "1", sha256: "", drifted: false }, { run: async () => {} }, "emulator");
+    assert.equal(outcome.result, "fail");
+    assert.match(outcome.detail ?? "", /^conversion failed: Build failed with 1 error: .*\.\/missing\.js \(imported from bg\.js\) is not in the extension$/);
+  });
+});
+
+describe("runCorpus", () => {
+  it("marks a case whose archive can't be had as failed everywhere, its reference too, and goes on", async () => {
+    const results = await runCorpus(["emulator", "tm"], [entry("gone", "modern")], async () => {
+      throw new Error("The download is empty");
+    });
+    const failed = { result: "fail", detail: "couldn't get the archive: The download is empty" };
+    for (const backend of ["emulator", "tm"] as const) {
+      assert.deepEqual(results.get(backend)?.map(({ reference, outcomes }) => ({ reference, outcomes })), [{ reference: failed, outcomes: { ext2userscript: failed, "baseline": failed } }]);
+    }
   });
 });

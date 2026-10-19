@@ -36,3 +36,14 @@ Requires Node 22.16 or newer.
     npm test               # unit tests
     npm run test:browser   # browser tests against the CI emulator
     npm run typecheck
+
+### Benchmark
+
+The benchmark converts 23 pinned extensions with ext2userscript and with the baseline, runs each case against the original extension and both userscripts, and writes a scorecard against v1's ship criteria (spec §1 and §10).
+
+    npm run bench                                       # the corpus on the CI emulator; scorecard in bench/.cache/scorecard-emulator.md
+    npm run bench -- --case json-formatter,dark-reader  # some cases only
+    X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate # the release gate, also on real Tampermonkey and Violentmonkey
+    npm run bench:pin                                   # re-pin the cases to the stores' current versions
+
+The release gate needs `npm run bench:setup` once; `BENCH_PROFILE` points it at another profile. The first run downloads the 23 archives into `bench/.cache/`, which is never committed.

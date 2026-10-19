@@ -15,6 +15,26 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:browser
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/cache@v4
+        with:
+          path: bench/.cache/archives
+          key: bench-archives-${{ hashFiles('bench/corpus.json') }}
+          restore-keys: bench-archives-
+      # Reports the scorecard; it doesn't gate until v1 meets the criteria (spec §10.5).
+      - run: npm run bench
+      - if: always()
+        run: cat bench/.cache/scorecard-emulator.md >> "$GITHUB_STEP_SUMMARY"
   pages:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
