@@ -40,7 +40,7 @@ export function start(
     const frame = window.top !== window;
     // Each namespace fakes the content-script members Chrome has and this version doesn't implement yet.
     const i18n = withFallback(log, "i18n", createI18n(config, log), ["detectLanguage"]);
-    const assets = createAssets(config.assets, config.id, i18n.getMessage, log);
+    const assets = createAssets(config.assets, config.id, i18n.getMessage, log, config.locales);
     const getURL = (path: string) => assets.url(path);
     const storage = createStorage(gm, config.ns, log);
     let registry: Registry | undefined;

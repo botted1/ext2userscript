@@ -3,7 +3,8 @@
 export type RunAt = "document_start" | "document_end" | "document_idle";
 export type World = "ISOLATED" | "MAIN";
 
-export type Message = { message: string; placeholders?: Record<string, { content: string }> };
+/** name: the message's name as messages.json writes it, when that isn't lower case (for code that reads the file). */
+export type Message = { name?: string; message: string; placeholders?: Record<string, { content: string }> };
 /** One locale's messages.json. Message and placeholder names are lower-cased, because Chrome ignores their case. */
 export type Messages = Record<string, Message>;
 

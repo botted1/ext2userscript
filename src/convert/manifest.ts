@@ -184,7 +184,8 @@ function messages(value: unknown): Messages {
         if (isObject(spec) && typeof spec.content === "string") placeholders[placeholder.toLowerCase()] = { content: spec.content };
       }
     }
-    out[name.toLowerCase()] = Object.keys(placeholders).length > 0 ? { message: entry.message, placeholders } : { message: entry.message };
+    const original = name === name.toLowerCase() ? {} : { name };
+    out[name.toLowerCase()] = Object.keys(placeholders).length > 0 ? { ...original, message: entry.message, placeholders } : { ...original, message: entry.message };
   }
   return out;
 }

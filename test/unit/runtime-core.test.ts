@@ -234,6 +234,26 @@ describe("createAssets", () => {
     const css = assets.css('a { background: url("x2u-asset:img%2Fdot.png"); content: "__MSG_label__"; }');
     assert.match(css, /^a \{ background: url\("blob:[^"]+"\); content: "\[label\]"; \}$/);
   });
+
+  it("puts the file's path in the URL's fragment, which loading ignores", async () => {
+    const assets = createAssets({ ...table, "js&css/a.css": ["text/css", btoa("a{}")] }, "id", () => "", recorder());
+    const url = assets.url("/js&css/a.css");
+    assert.match(url, /^blob:[^#]+#js&css\/a\.css$/);
+    assert.equal(assets.pathOf(url), "js&css/a.css");
+    assert.equal(assets.pathOf(url.replace(/#.*$/, "")), "js&css/a.css");
+    assert.equal(await fetch(url).then((response) => response.text()), "a{}");
+    // Code that adds a cache-buster after the fragment still loads the file.
+    assert.equal(await fetch(`${url}?v=2`).then((response) => response.text()), "a{}");
+  });
+
+  it("serves a locale's messages.json from the runtime config, with the names as the file wrote them", async () => {
+    const locales = { en: { appname: { name: "appName", message: "My App" }, desc: { message: "Does $1$", placeholders: { one: { content: "$1" } } } } };
+    const assets = createAssets(table, "id", () => "", recorder(), locales);
+    const expected = { appName: { message: "My App" }, desc: { message: "Does $1$", placeholders: { one: { content: "$1" } } } };
+    assert.deepEqual(JSON.parse(assets.text("_locales/en/messages.json") ?? ""), expected);
+    assert.deepEqual(JSON.parse(await fetch(assets.url("/_locales/en/messages.json")).then((response) => response.text())), expected);
+    assert.equal(assets.file("_locales/de/messages.json"), undefined);
+  });
 });
 
 describe("backgroundChrome", () => {

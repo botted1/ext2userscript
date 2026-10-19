@@ -71,7 +71,7 @@ describe("readManifest", () => {
     assert.equal(model.description, "Does things v2");
     assert.equal(model.locale, "en");
     assert.deepEqual(Object.keys(model.locales).sort(), ["de", "en"]);
-    assert.deepEqual(model.locales.en, { appname: { message: "My App" }, desc: { message: "Does things" } });
+    assert.deepEqual(model.locales.en, { appname: { name: "AppName", message: "My App" }, desc: { message: "Does things" } });
   });
 
   it("resolves against --locale, matching its base language, and falls back to the default per message", () => {

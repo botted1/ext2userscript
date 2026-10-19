@@ -1,7 +1,7 @@
 // Extension files at runtime (spec §3.6): runtime.getURL hands out a blob: URL per bundled file, made on first use and
 // cached. CSS from content groups carries placeholders for its url() targets, which become those blob URLs here.
 import type { Logger } from "./chrome.ts";
-import type { AssetTable } from "./config.ts";
+import type { AssetTable, Messages } from "./config.ts";
 
 /** The converter writes `url("x2u-asset:<encoded path>")` into CSS; css() swaps each one for the file's blob URL. */
 export const ASSET_PREFIX = "x2u-asset:";
@@ -12,41 +12,58 @@ const toPath = (url: string) => url.replace(/[?#].*$/, "").split("/").filter((pa
 
 const decode = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
-export function createAssets(table: AssetTable, id: string, getMessage: (name: string) => string, log: Logger) {
+export function createAssets(table: AssetTable, id: string, getMessage: (name: string) => string, log: Logger, locales: Record<string, Messages> = {}) {
   const urls = new Map<string, string>();
   const paths = new Map<string, string>();
+
+  /**
+   * A file's type and bytes: from the table, or a _locales/<locale>/messages.json, which the runtime config holds
+   * already (as parsed messages), for code that reads its own (Improve YouTube! fetches one, and loops until it loads).
+   */
+  const lookup = (path: string): { type: string; bytes: Uint8Array<ArrayBuffer> } | undefined => {
+    const entry = table[path];
+    if (entry) return { type: entry[0], bytes: decode(entry[1]) };
+    const messages = locales[/^_locales\/([^/]+)\/messages\.json$/.exec(path)?.[1] ?? ""];
+    if (!messages) return undefined;
+    const json = Object.fromEntries(Object.entries(messages).map(([key, { name, ...message }]) => [name ?? key, message]));
+    return { type: "application/json", bytes: new TextEncoder().encode(JSON.stringify(json)) };
+  };
 
   const missing = (path: string) => log.once(`asset:${path}`, `${path} isn't in the userscript (missing from the extension, or excluded with --ignore-assets)`);
 
   const url = (input: string): string => {
     const path = toPath(String(input));
-    const entry = table[path];
-    if (!entry) {
-      missing(path);
-      return `chrome-extension://${id}/${path}`;
-    }
-    let blobUrl = urls.get(path);
-    if (blobUrl === undefined) {
-      blobUrl = URL.createObjectURL(new Blob([decode(entry[1])], { type: entry[0] }));
-      urls.set(path, blobUrl);
+    let assetUrl = urls.get(path);
+    if (assetUrl === undefined) {
+      const file = lookup(path);
+      if (!file) {
+        missing(path);
+        return `chrome-extension://${id}/${path}`;
+      }
+      const blobUrl = URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
+      // The file's path rides along as the fragment, which loading ignores: code that reads the URL's text (does it
+      // end in .css?) sees the path there, as it would in Chrome's chrome-extension://<id>/<path>.
+      assetUrl = `${blobUrl}#${encodeURI(path)}`;
+      urls.set(path, assetUrl);
       paths.set(blobUrl, path);
     }
-    return blobUrl;
+    return assetUrl;
   };
 
   const placeholders = (text: string) => text.replace(PLACEHOLDER, (_whole, encoded: string) => url(decodeURIComponent(encoded)));
 
   return {
     url,
-    /** The asset path behind a blob URL this table handed out. */
-    pathOf: (blobUrl: string) => paths.get(blobUrl),
-    text: (path: string) => (table[path] ? new TextDecoder().decode(decode(table[path][1])) : undefined),
+    /** The asset path behind a URL this table handed out, with or without its fragment. */
+    pathOf: (url: string) => paths.get(url.replace(/#.*$/, "")),
+    text: (path: string) => {
+      const file = lookup(path);
+      return file ? new TextDecoder().decode(file.bytes) : undefined;
+    },
     /** A file's type and bytes, for the network shim to answer a request for it in this page. */
     file: (input: string) => {
       const path = toPath(String(input));
-      const entry = table[path];
-      if (!entry) return void missing(path);
-      return { type: entry[0], bytes: decode(entry[1]) };
+      return lookup(path) ?? void missing(path);
     },
     /** The file as a data: URL, for a consumer outside the page that can't load its blob: URLs (a manager's notification). */
     dataUrl: (path: string) => {
