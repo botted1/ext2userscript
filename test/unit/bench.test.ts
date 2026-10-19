@@ -3,14 +3,65 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CaseResult, Outcome } from "../../bench/case.ts";
 import { archiveOf, sha256, type CorpusEntry } from "../../bench/corpus.ts";
 import { pinEntry } from "../../bench/pin.ts";
+import { criteria, scorecard } from "../../bench/scorecard.ts";
 import { files, zipFiles } from "../support/extension.ts";
 
 const entry = (id: string, kind: CorpusEntry["kind"], extra: Partial<CorpusEntry> = {}): CorpusEntry => ({
   id, name: id, store: "cws", extensionId: "a".repeat(32), version: "1.0", sha256: "0".repeat(64), kind, ...extra,
 });
 const archive = (version: string) => zipFiles(files({ "manifest.json": JSON.stringify({ name: "A", version, manifest_version: 3 }) }));
+const PASS: Outcome = { result: "pass" };
+const FAIL: Outcome = { result: "fail", detail: "no effect" };
+const NA: Outcome = { result: "n/a" };
+const result = (id: string, kind: CorpusEntry["kind"], ours: Outcome, theirs: Outcome, reference: Outcome = kind === "negative" ? NA : PASS): CaseResult => ({
+  entry: entry(id, kind), version: "1.0", drifted: false, reference, outcomes: { ext2userscript: ours, "baseline": theirs },
+});
+
+describe("criteria", () => {
+  it("counts the cases the baseline passes, the modern cases it fails, and the negatives", () => {
+    const c = criteria([
+      result("l1", "legacy", PASS, PASS),
+      result("l2", "legacy", FAIL, PASS),
+      result("m1", "modern", PASS, FAIL),
+      result("m2", "modern", FAIL, FAIL),
+      result("m3", "modern", PASS, PASS),
+      result("n1", "negative", PASS, NA),
+    ]);
+    assert.deepEqual(c, { matched: [2, 3], modern: [1, 2], negatives: [1, 1], inconclusive: [], met: false });
+  });
+
+  it("is met at 75% of the modern cases the baseline fails, and not below", () => {
+    const modern = (passed: number) => Array.from({ length: 4 }, (_, i) => result(`m${i}`, "modern", i < passed ? PASS : FAIL, FAIL));
+    assert.equal(criteria(modern(3)).met, true);
+    assert.equal(criteria(modern(2)).met, false);
+  });
+
+  it("leaves out a case the original extension fails, and isn't met while one is inconclusive", () => {
+    const c = criteria([result("l1", "legacy", FAIL, PASS, FAIL), result("m1", "modern", PASS, FAIL)]);
+    assert.deepEqual(c.matched, [0, 0]);
+    assert.deepEqual(c.inconclusive, ["l1"]);
+    assert.equal(c.met, false);
+  });
+});
+
+describe("scorecard", () => {
+  it("shows each case's outcomes, a drifted version, and the criteria", () => {
+    const drifted = { ...result("rg", "modern", { result: "fail", detail: "a | b\nc" }, FAIL), version: "2.0", drifted: true };
+    const card = scorecard([drifted, result("mv2", "legacy", PASS, PASS, { result: "n/a", detail: "Manifest V2" })], {
+      backend: "emulator", baseline: "0.1.4", commit: "abc1234", date: "2026-10-19",
+    });
+    assert.match(card, /2026-10-19, backend emulator, ext2userscript abc1234, the baseline 0\.1\.4/);
+    assert.match(card, /\| rg \| modern \| 2\.0 \(pinned 1\.0\) \| pass \| fail: a \\\| b c \| fail: no effect \|/);
+    assert.match(card, /\| mv2 \| legacy \| 1\.0 \| n\/a \(Manifest V2\) \| pass \| pass \|/);
+    assert.match(card, /- \[x\] Passes every case the baseline passes: 1 of 1, 100%/);
+    assert.match(card, /- \[ \] Passes at least 75% of the modern cases the baseline fails: 0 of 1, 0%/);
+    assert.match(card, /- \[x\] An accurate report for every negative case: none to count/);
+    assert.match(card, /\*\*Not met yet\.\*\*/);
+  });
+});
 
 describe("archiveOf", () => {
   it("uses the pinned archive from the cache without downloading", async () => {
