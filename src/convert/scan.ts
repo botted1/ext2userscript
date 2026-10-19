@@ -17,6 +17,8 @@ export type ScanResult = {
   files: string[];
   /** String literals that look like a relative file's path ("../config/a.config", "data/b.json"): files the code may read. */
   paths: string[];
+  /** Hosts of the http(s) URLs in string literals and template heads ("https://a.example/x/${path}"), in first-use order. */
+  hosts: string[];
   dynamicImport: boolean;
   /** import(...) calls: where each is, and the file when its argument is runtime.getURL("<literal>") (an extension file). */
   imports: Array<{ start: number; end: number; path?: string }>;
@@ -49,7 +51,7 @@ const SITE_GLOBALS = new Set(["indexedDB", "sessionStorage", "customElements"]);
 
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
-  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], paths: [], dynamicImport: false, imports: [], importScripts: [], lexical: [], declarations: [], globals: [] };
+  const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], paths: [], hosts: [], dynamicImport: false, imports: [], importScripts: [], lexical: [], declarations: [], globals: [] };
   const declare = (name: string) => void (result.declarations.includes(name) || result.declarations.push(name));
   const isDot = (token: Token | undefined) => token?.kind === "punct" && (token.value === "." || token.value === "?.");
   let brackets = 0; // open ( and [
@@ -60,6 +62,8 @@ export function scan(code: string): ScanResult {
     if (token.kind === "punct" && (token.value === "(" || token.value === "[")) brackets++;
     else if (token.kind === "punct" && (token.value === ")" || token.value === "]")) brackets--;
     if (token.kind === "string" && /^\/?[\w@~.-]+(?:\/[\w@~.-]+)*\.(?:js|css)$/.test(token.value)) result.files.push(token.value);
+    const host = (token.kind === "string" || token.kind === "template") && /^https?:\/\/([a-z\d.-]+\.[a-z]{2,})(?:[:/?#]|$)/i.exec(token.value)?.[1]?.toLowerCase();
+    if (host && !result.hosts.includes(host)) result.hosts.push(host);
     if (token.kind === "string" && /^(?:\.\.?\/)*\/?[\w@~-][\w@~.-]*(?:\/[\w@~.-]+)*\.[a-z\d]{1,10}$/i.test(token.value)) result.paths.push(token.value);
     if (token.kind !== "name") continue;
     if (token.depth === 0 && brackets === 0 && !isDot(tokens[i - 1])) {
@@ -167,6 +171,8 @@ function tokenize(code: string): Token[] {
   const template = (start: number, first: boolean) => {
     const part = templatePart(start);
     if (part.open) {
+      // The head of a template with substitutions, for the URLs it starts with.
+      if (first) tokens.push({ kind: "template", value: part.text, start: 0, end: 0, depth: 0 });
       substitutions.push(braces);
       braces++;
       tokens.push({ kind: "punct", value: "${", start: 0, end: 0, depth: 0 });

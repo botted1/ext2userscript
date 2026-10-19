@@ -79,6 +79,17 @@ describe("convert", () => {
     const config = JSON.parse(/__x2uRuntime\.start\((\{.*?\}), \[\n/s.exec(userscript)?.[1] ?? "{}");
     assert.deepEqual(Object.keys(config.assets), ["config/sites.config"]);
   });
+
+  it("grants GM_openInTab when the extension opens tabs or windows", async () => {
+    const header = async (code: string) => {
+      const all = files({ "manifest.json": JSON.stringify({ manifest_version: 3, name: "T", version: "1", background: { service_worker: "bg.js" } }), "bg.js": code });
+      const { userscript } = await convert(all, { runtime });
+      return userscript.slice(0, userscript.indexOf("// ==/UserScript=="));
+    };
+    assert.match(await header('chrome.tabs.create({ url: "https://a.test/" });'), /\/\/ @grant {8}GM_openInTab\n/);
+    assert.match(await header('chrome.windows.create({ url: "https://a.test/" });'), /\/\/ @grant {8}GM_openInTab\n/);
+    assert.doesNotMatch(await header("chrome.tabs.query({});"), /GM_openInTab/);
+  });
 });
 
 describe("inspect", () => {

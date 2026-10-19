@@ -114,7 +114,9 @@ async function prepare(
     entries: sortEntries(entries),
     warnings: [...manifestWarnings, ...bundleWarnings, ...background.warnings, ...pageWarnings, ...assets.warnings],
   };
-  return { header: renderMetadata(model, files, ns, grantsFor(methods)), config, code, background: background.background, injectables, pages, report };
+  // Hosts the code names, for @connect (metadata.ts connectHosts).
+  const namedHosts = [...new Set([...scans.flatMap((result) => result?.hosts ?? []), ...(backgroundScan?.hosts ?? []), ...pageScans.flatMap((result) => result.hosts)])];
+  return { header: renderMetadata(model, files, ns, grantsFor(methods), namedHosts), config, code, background: background.background, injectables, pages, report };
 }
 
 /** Script files, which are bundled rather than served as assets. */

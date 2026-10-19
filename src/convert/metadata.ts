@@ -1,5 +1,6 @@
 // The userscript header (spec §4). Grants come from gm.ts's grant table; nothing here names a GM function.
 import type { RunAt } from "../runtime/config.ts";
+import { urlMatches } from "../runtime/match.ts";
 import { mimeOf, toBase64 } from "./files.ts";
 import type { Model } from "./manifest.ts";
 import type { ExtensionFiles } from "./unpack.ts";
@@ -17,18 +18,23 @@ export function namespaceOf(model: Model): string {
 
 /**
  * @connect lines for the host permissions, required and optional: the network shim sends requests for these hosts
- * through GM_xmlhttpRequest, which Tampermonkey checks against @connect. A pattern for any host becomes *.
+ * through GM_xmlhttpRequest, which Tampermonkey checks against @connect. A pattern for any host becomes *, after the
+ * named hosts: Tampermonkey asks the user before reaching a host @connect doesn't name, even under *, so the hosts the
+ * code names (named) that a permission covers are listed too.
  */
-export function connectHosts(patterns: readonly string[]): string[] {
+export function connectHosts(patterns: readonly string[], named: readonly string[] = []): string[] {
   const hosts = new Set<string>();
+  let any = false;
   for (const pattern of patterns) {
     const host = pattern === "<all_urls>" ? "*" : /^[a-z*-]+:\/\/([^/]*)/.exec(pattern)?.[1]?.replace(/:(?:\d+|\*)$/, "");
-    if (host) hosts.add(host === "*" ? "*" : host.replace(/^\*\./, ""));
+    if (host === "*") any = true;
+    else if (host) hosts.add(host.replace(/^\*\./, ""));
   }
-  return hosts.has("*") ? ["*"] : [...hosts];
+  for (const host of named) if (urlMatches(`https://${host}/`, patterns) || urlMatches(`http://${host}/`, patterns)) hosts.add(host);
+  return any ? [...hosts, "*"] : [...hosts];
 }
 
-export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, grants: readonly string[]): string {
+export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, grants: readonly string[], namedHosts: readonly string[] = []): string {
   // Every value goes through oneLine: a line break in any of them would start a header line of its own.
   const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
   const lines: Array<[key: string, value: string]> = [["name", model.name], ["namespace", ns], ["version", model.version]];
@@ -46,7 +52,7 @@ export function renderMetadata(model: Model, files: ExtensionFiles, ns: string, 
   lines.push(["run-at", runAt.replace("_", "-")]);
   if (!groups.some((group) => group.allFrames)) lines.push(["noframes", ""]);
   lines.push(["sandbox", "DOM"], ["inject-into", "content"]);
-  for (const host of connectHosts([...model.hostPermissions, ...model.optionalHostPermissions])) lines.push(["connect", host]);
+  for (const host of connectHosts([...model.hostPermissions, ...model.optionalHostPermissions], namedHosts)) lines.push(["connect", host]);
   for (const grant of grants) lines.push(["grant", grant]);
   return ["// ==UserScript==", ...lines.map(([key, value]) => `// @${key.padEnd(12)} ${oneLine(value)}`.trimEnd()), "// ==/UserScript=="].join("\n");
 }

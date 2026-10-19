@@ -69,7 +69,7 @@ describe("renderMetadata", () => {
   it("adds @connect for each host permission's host, required and optional, and * when any host will do", () => {
     const text = header({ host_permissions: ["https://*.a.test/*", "http://localhost:8080/*", "file:///*"], optional_host_permissions: ["*://b.test/*"] });
     assert.deepEqual(values(text, "connect"), ["a.test", "localhost", "b.test"]);
-    assert.deepEqual(values(header({ host_permissions: ["https://a.test/*", "<all_urls>"] }), "connect"), ["*"]);
+    assert.deepEqual(values(header({ host_permissions: ["https://a.test/*", "<all_urls>"] }), "connect"), ["a.test", "*"]);
     assert.deepEqual(values(header({ manifest_version: 2, permissions: ["*://*/*", "tabs"] }), "connect"), ["*"]);
     assert.deepEqual(values(header({}), "connect"), []);
   });
@@ -79,5 +79,13 @@ describe("renderMetadata", () => {
     assert.deepEqual(values(header(icons, { "i16.png": PIXEL, "i48.png": PIXEL, "i128.svg": "<svg/>" }), "icon"), [`data:image/png;base64,${btoa(String.fromCharCode(...PIXEL))}`]);
     assert.deepEqual(values(header({ icons: { "16": "i16.png" } }, { "i16.png": PIXEL }), "icon").length, 1);
     assert.deepEqual(values(header({ icons: { "48": "missing.png" } }), "icon"), []);
+  });
+
+  it("adds @connect for each host the code names that a host permission covers, before *", () => {
+    const all = files({ "manifest.json": JSON.stringify({ manifest_version: 3, name: "N", version: "1", host_permissions: ["https://a.test/*"], optional_host_permissions: ["*://*/*"] }) });
+    const text = renderMetadata(readManifest(all).model, all, "n", [], ["b.example", "a.test"]);
+    assert.deepEqual(values(text, "connect"), ["a.test", "b.example", "*"]);
+    const narrow = files({ "manifest.json": JSON.stringify({ manifest_version: 3, name: "N", version: "1", host_permissions: ["https://*.a.test/*"] }) });
+    assert.deepEqual(values(renderMetadata(readManifest(narrow).model, narrow, "n", [], ["api.a.test", "b.example"]), "connect"), ["a.test", "api.a.test"]);
   });
 });

@@ -85,4 +85,9 @@ describe("scan", () => {
     const { paths } = scan('x.open("GET", "../config/a.config"); load("data/b.json"); "icon.png"; "plain words"; "https://a.test/c.json"');
     assert.deepEqual(paths, ["../config/a.config", "data/b.json", "icon.png"]);
   });
+
+  it("finds the hosts of http(s) URLs in strings and template heads, once each", () => {
+    const { hosts } = scan('fetch("https://API.example.com/v1"); const u = `https://cdn.example.org/x/${path}`; "http://example.com"; "https://example.com/again"; "not https://inside.test"; "https://localhost/"');
+    assert.deepEqual(hosts, ["api.example.com", "cdn.example.org", "example.com"]);
+  });
 });
