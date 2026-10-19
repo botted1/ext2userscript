@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createAssets } from "../../src/runtime/assets.ts";
 import { callWithLastError, createEvent, createLogger, method, readLastError, withFallback, type Logger } from "../../src/runtime/chrome.ts";
 import { createI18n, pickLocale } from "../../src/runtime/i18n.ts";
+import { frameScript } from "../../src/runtime/trusted.ts";
 
 /** A logger that records what it would print. */
 function recorder(): Logger & { lines: string[] } {
@@ -230,5 +231,15 @@ describe("createAssets", () => {
     const assets = createAssets(table, "id", (name) => (name === "@@extension_id" ? "abc" : `[${name}]`), recorder());
     const css = assets.css('a { background: url("x2u-asset:img%2Fdot.png"); content: "__MSG_label__"; }');
     assert.match(css, /^a \{ background: url\("blob:[^"]+"\); content: "\[label\]"; \}$/);
+  });
+});
+
+describe("frameScript", () => {
+  it("reads the script a V8 stack frame belongs to, with or without a function name", () => {
+    assert.equal(frameScript("    at Proxy.later (chrome-extension://abc/userscript.html?name=a.user.js&id=1:15:134)"), "chrome-extension://abc/userscript.html?name=a.user.js&id=1");
+    assert.equal(frameScript("    at chrome-extension://abc/a%20b.user.js#23:14:15"), "chrome-extension://abc/a%20b.user.js#23");
+    assert.equal(frameScript("    at <anonymous>:289:15"), "<anonymous>");
+    assert.equal(frameScript("Error"), undefined);
+    assert.equal(frameScript(undefined), undefined);
   });
 });

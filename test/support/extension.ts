@@ -9,6 +9,7 @@
 // - pagesExtension has a popup, an options page, a background and a content script talking to each other.
 // - popupOnlyExtension has a popup and no background.
 // - plainExtension is the smallest one that converts with no unsupported or partial entries.
+// - trustedTypesExtension writes HTML and a <script src=runtime.getURL(...)> into a page that requires Trusted Types.
 import { strToU8, zipSync } from "fflate";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
 
@@ -387,5 +388,28 @@ export function popupOnlyExtension(origin: string): ExtensionFiles {
     "popup.js": `const out = document.getElementById("out");
 chrome.action.setBadgeText({ text: "1" }).then(() => chrome.action.getBadgeText({})).then((text) => (out.dataset.badge = text));
 chrome.runtime.sendMessage("anyone?").then(() => (out.dataset.send = "answered"), (error) => (out.dataset.send = error.message));`,
+  });
+}
+
+/** A content script that puts HTML and a script of its own into the page, for a page that requires Trusted Types. */
+export function trustedTypesExtension(origin: string): ExtensionFiles {
+  return files({
+    "manifest.json": JSON.stringify({
+      manifest_version: 3,
+      name: "Trusted",
+      version: "1",
+      content_scripts: [{ matches: [`${origin}/*`], js: ["content.js"], run_at: "document_end" }],
+      web_accessible_resources: [{ resources: ["inject.js"], matches: ["<all_urls>"] }],
+    }),
+    "content.js": `
+      document.documentElement.dataset.extStarted = "1";
+      document.body.insertAdjacentHTML("beforeend", '<b id="ext-html">from the extension</b>');
+      const script = document.createElement("script");
+      script.src = chrome.runtime.getURL("inject.js");
+      script.onload = () => (document.documentElement.dataset.injectLoaded = "1");
+      document.documentElement.appendChild(script);
+      document.documentElement.dataset.extDone = "1";
+    `,
+    "inject.js": `document.documentElement.dataset.injected = "page";`,
   });
 }

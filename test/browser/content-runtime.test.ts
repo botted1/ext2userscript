@@ -9,7 +9,7 @@ import { convert } from "../../src/convert/index.ts";
 import { loadRuntime } from "../../src/convert/runtime-node.ts";
 import type { ExtensionFiles } from "../../src/convert/unpack.ts";
 import { readAttr, waitForAttr } from "../support/dom.ts";
-import { apiExtension, backgroundExtension, moduleBackgroundExtension, networkExtension, sampleExtension } from "../support/extension.ts";
+import { apiExtension, backgroundExtension, moduleBackgroundExtension, networkExtension, sampleExtension, trustedTypesExtension } from "../support/extension.ts";
 import { startServer, type Server } from "../support/server.ts";
 import { sleep } from "../support/time.ts";
 
@@ -26,6 +26,26 @@ const connectStrictPage = async () => {
 const strictPage = async () => {
   const response = page();
   response.headers.set("content-security-policy", "script-src 'self'; object-src 'none'");
+  return response;
+};
+
+/** A page that requires Trusted Types, as YouTube does; once the extension has run, it tries an HTML string of its own. */
+const trustedTypesPage = async () =>
+  new Response(
+    `<!doctype html><html><head><title>x2u</title></head><body><script>
+      new MutationObserver(() => {
+        const root = document.documentElement;
+        if (!root.dataset.extDone || root.dataset.pageAfter) return;
+        try { document.body.insertAdjacentHTML("beforeend", "<i>from the page</i>"); root.dataset.pageAfter = "ok"; } catch { root.dataset.pageAfter = "blocked"; }
+      }).observe(document.documentElement, { attributes: true });
+    </script></body></html>`,
+    { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "require-trusted-types-for 'script'" } },
+  );
+
+/** A page that requires Trusted Types and names the policies it allows, so the runtime can't create its own. */
+const namedPoliciesPage = async () => {
+  const response = await trustedTypesPage();
+  response.headers.set("content-security-policy", "require-trusted-types-for 'script'; trusted-types site-policy");
   return response;
 };
 
@@ -51,6 +71,8 @@ function harness(backend: (typeof backends)[number], extension: (origin: string)
       "/framed.html": html('<iframe src="/child.html"></iframe>'),
       "/child.html": html("child"),
       "/strict.html": strictPage,
+      "/trusted-types.html": trustedTypesPage,
+      "/named-policies.html": namedPoliciesPage,
       "/connect-strict.html": connectStrictPage,
       "/api.json": () => Response.json({ from: "api" }),
       "/same.json": () => Response.json({ from: "same" }),
@@ -124,6 +146,23 @@ for (const backend of backends) {
       await waitForAttr(reader, "data-stored", "1");
       await open("/writer.html");
       assert.match((await attrUntil(reader.locator("html"), "data-changed", (value) => (value ?? "").includes("fromWriter"))) ?? "", /fromWriter/);
+    });
+  });
+
+  describe(`Trusted Types on ${backend}`, () => {
+    const { open } = harness(backend, trustedTypesExtension);
+
+    it("lets the extension's own HTML and script in on a page that requires Trusted Types, while the page's still need them", async () => {
+      const tab = await open("/trusted-types.html");
+      await waitForAttr(tab, "data-inject-loaded", "1");
+      assert.equal(await readAttr(tab, "data-injected"), "page");
+      assert.equal(await tab.locator("#ext-html").count(), 1);
+      await waitForAttr(tab, "data-page-after", "blocked");
+    });
+
+    it("still runs the extension on a page whose CSP names its allowed policies, refusing the runtime's", async () => {
+      const tab = await open("/named-policies.html");
+      await waitForAttr(tab, "data-ext-started", "1");
     });
   });
 
