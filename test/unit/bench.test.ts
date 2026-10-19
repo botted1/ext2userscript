@@ -1,11 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaseResult, Outcome } from "../../bench/case.ts";
 import { archiveOf, sha256, type CorpusEntry } from "../../bench/corpus.ts";
 import { pinEntry } from "../../bench/pin.ts";
+import { copyProfile } from "../../bench/real/managers.ts";
 import { runCase, runCorpus, runReference } from "../../bench/run.ts";
 import { criteria, scorecard } from "../../bench/scorecard.ts";
 import { files, zipFiles } from "../support/extension.ts";
@@ -98,6 +99,20 @@ describe("pinEntry", () => {
     await writeFile(join(dir, `x-${sha256(old).slice(0, 12)}.crx`), old);
     const pinned = await pinEntry(entry("x", "modern", { sha256: sha256(old) }), { dir, download: async () => current });
     assert.deepEqual([pinned.version, pinned.sha256], ["2.0", sha256(current)]);
+  });
+});
+
+describe("copyProfile", () => {
+  it("copies a profile without its caches and a running browser's locks", async () => {
+    const from = await mkdtemp(join(tmpdir(), "x2u-profile-"));
+    for (const dir of ["Default/Cache", "Default/Code Cache", "Default/Local Extension Settings"]) await mkdir(join(from, dir), { recursive: true });
+    await writeFile(join(from, "Default/Preferences"), "{}");
+    await writeFile(join(from, "Default/Cache/data_0"), "x");
+    await writeFile(join(from, "SingletonLock"), "x");
+    const to = join(await mkdtemp(join(tmpdir(), "x2u-profile-")), "copy");
+    await copyProfile(from, to);
+    assert.deepEqual((await readdir(to)).sort(), ["Default"]);
+    assert.deepEqual((await readdir(join(to, "Default"))).sort(), ["Local Extension Settings", "Preferences"]);
   });
 });
 

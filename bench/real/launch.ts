@@ -6,10 +6,10 @@ import { MANAGERS, managerDir, profileDir, type ManagerName } from "./managers.t
 
 const isExtensionWorker = (worker: Worker) => worker.url().startsWith("chrome-extension://");
 
-export async function launchReal(manager: ManagerName): Promise<{ context: BrowserContext; extensionId: string }> {
+export async function launchReal(manager: ManagerName, profile = profileDir()): Promise<{ context: BrowserContext; extensionId: string }> {
   const dir = managerDir(manager);
   if (!existsSync(join(dir, "manifest.json"))) throw new Error(`${MANAGERS[manager].label} isn't set up: run npm run bench:setup first`);
-  const context = await chromium.launchPersistentContext(profileDir(), {
+  const context = await chromium.launchPersistentContext(profile, {
     channel: "chromium",
     headless: !process.env.HEADED,
     args: [`--disable-extensions-except=${dir}`, `--load-extension=${dir}`],
