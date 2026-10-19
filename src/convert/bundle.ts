@@ -1,11 +1,13 @@
 // Extension code as the userscript runs it (spec §3.3).
 // - Content scripts and classic backgrounds: files concatenated as text in manifest or page order, as a browser runs
 //   classic scripts in one shared scope. Nothing is renamed or hoisted.
-// - A classic service worker's importScripts("a.js", ...) with string literals is replaced by the files' contents.
+// - A classic service worker's importScripts("a.js", ...) with string literals is replaced by the files' contents, and a
+//   content script's import(runtime.getURL("<file>")) by the module, bundled.
 // - ES modules (a module service worker, <script type="module"> in a background page) are bundled by esbuild into an
 //   IIFE, with import.meta standing for an object the runtime passes in.
 // emit.ts wraps the results.
 import type { World } from "../runtime/config.ts";
+import { extensionPath } from "./assets.ts";
 import { bundleModule, type EsbuildApi } from "./esbuild.ts";
 import { decodeText } from "./files.ts";
 import type { Model } from "./manifest.ts";
@@ -19,19 +21,57 @@ export type ContentCode = { world: World; code: string } | null;
 /** exports: a background page's top-level declarations, which getBackgroundPage hands out as its window's (spec §5.2). */
 export type BackgroundBundle = { code: string; worker: boolean; entry: string; exports?: string[] };
 
-/** One entry per content group: its concatenated JS, or null when it has none (a CSS-only group). */
-export function bundleContent(model: Model, files: ExtensionFiles): { code: ContentCode[]; warnings: string[] } {
+/**
+ * One entry per content group: its concatenated JS, or null when it has none (a CSS-only group). In the isolated world,
+ * import(runtime.getURL("<file>")) is bundled (spec §3.3), as Chrome runs the module in the content script's world:
+ * each call becomes __x2uImport("<file>"), which the group defines first.
+ */
+export async function bundleContent(model: Model, files: ExtensionFiles, esbuild?: EsbuildApi): Promise<{ code: ContentCode[]; warnings: string[] }> {
   const warnings: string[] = [];
-  const code = model.contentScripts.map((group, i): ContentCode => {
+  const code: ContentCode[] = [];
+  for (const [i, group] of model.contentScripts.entries()) {
     const parts = group.js.flatMap((path) => {
       const bytes = files.get(path);
       if (bytes) return [decodeText(bytes)];
       warnings.push(`content_scripts[${i}].js: ${path} isn't in the extension, so it was left out`);
       return [];
     });
+    const modules = new Map<string, string>();
+    if (group.world === "ISOLATED") {
+      for (const [p, part] of parts.entries()) {
+        let text = part;
+        for (const call of scan(part).imports.sort((a, b) => b.start - a.start)) {
+          const file = call.path === undefined ? undefined : extensionPath(call.path, "");
+          if (file === undefined) continue;
+          if (!files.has(file)) {
+            warnings.push(`content_scripts[${i}] imports ${call.path}, which isn't in the extension`);
+            continue;
+          }
+          if (!modules.has(file)) {
+            if (!esbuild) throw new Error(`convert: content_scripts[${i}] imports ${file}, which needs the esbuild option`);
+            const bundle = await bundleModule(esbuild, files, file, { format: "function", define: { "import.meta": "__x2uImportMeta" } });
+            // Its remote imports would be import statements inside a function: the call stays as it is.
+            if (bundle.remoteImports.length > 0) {
+              warnings.push(`content_scripts[${i}] imports ${file}, which imports ${bundle.remoteImports.join(", ")}: remote modules can't be bundled, so it wasn't`);
+              continue;
+            }
+            modules.set(file, bundle.code);
+          }
+          text = `${text.slice(0, call.start)}__x2uImport(${JSON.stringify(file)})${text.slice(call.end)}`;
+        }
+        parts[p] = text;
+      }
+    }
+    if (modules.size > 0) {
+      const table = [...modules].map(([file, fn]) => `${JSON.stringify(file)}: ${fn}`).join(",\n");
+      // Each module runs once, with import.meta.url its own file's URL, as in Chrome.
+      parts.unshift(
+        `var __x2uImport = (function (modules, loaded) {\n  return function (path) {\n    return loaded[path] || (loaded[path] = modules[path]({ url: "chrome-extension://" + chrome.runtime.id + "/" + path }));\n  };\n})({\n${table}\n}, {});`,
+      );
+    }
     // A newline after each file ends a trailing // comment; the semicolon ends a statement left open (no ASI across files).
-    return parts.length === 0 ? null : { world: group.world, code: parts.join("\n;\n") };
-  });
+    code.push(parts.length === 0 ? null : { world: group.world, code: parts.join("\n;\n") });
+  }
   return { code, warnings };
 }
 

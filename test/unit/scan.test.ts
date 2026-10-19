@@ -73,4 +73,11 @@ describe("scan", () => {
     assert.ok(performance.now() - started < 2000, `took ${Math.round(performance.now() - started)} ms`);
     assert.equal(chains.length, Math.ceil((5 * 1024 * 1024) / chunk.length));
   });
+
+  it("finds import() calls, with the file when the argument is runtime.getURL of a literal", () => {
+    const code = 'void import(chrome.runtime.getURL("assets/a.js")); import(/* @vite-ignore */ browser.runtime.getURL("b.js")); import(x); import(chrome.runtime.getURL("c.js") + "?v=1");';
+    const { imports } = scan(code);
+    assert.deepEqual(imports.map((call) => call.path), ["assets/a.js", "b.js", undefined, undefined]);
+    assert.equal(code.slice(imports[0].start, imports[0].end), 'import(chrome.runtime.getURL("assets/a.js"))');
+  });
 });

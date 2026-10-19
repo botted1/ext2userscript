@@ -1,4 +1,5 @@
 import { describe, it } from "node:test";
+import { loadEsbuild } from "../../src/convert/esbuild-node.ts";
 import assert from "node:assert/strict";
 import { bundleContent } from "../../src/convert/bundle.ts";
 import { emit } from "../../src/convert/emit.ts";
@@ -22,18 +23,57 @@ describe("bundleContent", () => {
     return bundleContent(readManifest(all).model, all);
   };
 
-  it("concatenates each group's files in order, so a trailing // comment can't swallow the next file", () => {
-    const { code } = extension([{ matches: ["<all_urls>"], js: ["a.js", "b.js"] }], { "a.js": "var a = 1 // no newline", "b.js": "var b = a + 1" });
+  it("concatenates each group's files in order, so a trailing // comment can't swallow the next file", async () => {
+    const { code } = await extension([{ matches: ["<all_urls>"], js: ["a.js", "b.js"] }], { "a.js": "var a = 1 // no newline", "b.js": "var b = a + 1" });
     assert.deepEqual(code, [{ world: "ISOLATED", code: "var a = 1 // no newline\n;\nvar b = a + 1" }]);
   });
 
-  it("drops a byte-order mark, gives a CSS-only group null, and warns about a missing file", () => {
-    const { code, warnings } = extension(
+  it("drops a byte-order mark, gives a CSS-only group null, and warns about a missing file", async () => {
+    const { code, warnings } = await extension(
       [{ matches: ["<all_urls>"], js: ["bom.js", "gone.js"], world: "MAIN" }, { matches: ["<all_urls>"], css: ["a.css"] }],
       { "bom.js": "﻿var x = 1;" },
     );
     assert.deepEqual(code, [{ world: "MAIN", code: "var x = 1;" }, null]);
     assert.deepEqual(warnings, ["content_scripts[0].js: gone.js isn't in the extension, so it was left out"]);
+  });
+
+  it("bundles an isolated content script's import(runtime.getURL(...)), once per module, with import.meta.url and exports", async () => {
+    const all = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "Ext", version: "1", content_scripts: [{ matches: ["<all_urls>"], js: ["loader.js", "again.js"] }] }),
+      "loader.js": 'globalThis.__first = import(chrome.runtime.getURL("assets/main.js"));',
+      "again.js": 'globalThis.__second = import(chrome.runtime.getURL("/assets/main.js"));',
+      "assets/main.js": "import { two } from './two.js';\nglobalThis.__runs = (globalThis.__runs ?? 0) + 1;\nexport const url = import.meta.url;\nexport default await Promise.resolve(two);",
+      "assets/two.js": "export const two = 2;",
+    });
+    const { code } = await bundleContent(readManifest(all).model, all, await loadEsbuild());
+    const group = code[0] as { code: string };
+    assert.doesNotMatch(group.code, /\bimport\(/);
+    const scope = globalThis as { __first?: Promise<unknown>; __second?: Promise<unknown>; __runs?: number };
+    new Function("chrome", group.code)({ runtime: { id: "abc" } });
+    assert.deepEqual({ ...((await scope.__first) as object) }, { url: "chrome-extension://abc/assets/main.js", default: 2 });
+    assert.equal(await scope.__second, await scope.__first);
+    assert.equal(scope.__runs, 1);
+  });
+
+  it("leaves an import() of a module with remote imports alone, saying why", async () => {
+    const all = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "Ext", version: "1", content_scripts: [{ matches: ["<all_urls>"], js: ["a.js"] }] }),
+      "a.js": 'import(chrome.runtime.getURL("m.js"));',
+      "m.js": 'import "https://cdn.example.com/lib.js";',
+    });
+    const { code, warnings } = await bundleContent(readManifest(all).model, all, await loadEsbuild());
+    assert.equal((code[0] as { code: string }).code, 'import(chrome.runtime.getURL("m.js"));');
+    assert.deepEqual(warnings, ["content_scripts[0] imports m.js, which imports https://cdn.example.com/lib.js: remote modules can't be bundled, so it wasn't"]);
+  });
+
+  it("leaves an import() alone when it isn't a file of the extension, and warns about a missing one", async () => {
+    const all = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "Ext", version: "1", content_scripts: [{ matches: ["<all_urls>"], js: ["a.js"] }] }),
+      "a.js": 'import(url); import(chrome.runtime.getURL("gone.js"));',
+    });
+    const { code, warnings } = await bundleContent(readManifest(all).model, all, await loadEsbuild());
+    assert.equal((code[0] as { code: string }).code, 'import(url); import(chrome.runtime.getURL("gone.js"));');
+    assert.deepEqual(warnings, ["content_scripts[0] imports gone.js, which isn't in the extension"]);
   });
 });
 

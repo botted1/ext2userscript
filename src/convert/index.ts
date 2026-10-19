@@ -54,7 +54,7 @@ async function prepare(
   options: InspectOptions,
 ): Promise<{ header: string; config: RuntimeConfig; code: ContentCode[]; background: BackgroundBundle | null; injectables: Record<string, string>; pages: PageBundle[]; report: Report }> {
   const { model, warnings: manifestWarnings } = readManifest(files, { locale: options.locale });
-  const { code, warnings: bundleWarnings } = bundleContent(model, files);
+  const { code, warnings: bundleWarnings } = await bundleContent(model, files, options.esbuild);
   const scans = code.map((group) => (group?.world === "ISOLATED" ? scan(group.code) : undefined));
   const background = await bundleBackground(model, files, options.esbuild);
   const backgroundScan = background.background ? scan(background.background.code) : undefined;

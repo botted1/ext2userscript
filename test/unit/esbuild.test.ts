@@ -61,4 +61,26 @@ describe("bundleModule", () => {
       /\.\/missing\.js \(imported from w\.js\) is not in the extension/,
     );
   });
+
+  it("bundles an IIFE whose entry has a top-level await as an async function called at once", async () => {
+    const esbuild = await loadEsbuild();
+    const { code } = await bundleModule(esbuild, files({ "page.js": "import { two } from './two.js';\nglobalThis.__got = await Promise.resolve(two);", "two.js": "export const two = 2;" }), "page.js", { format: "iife" });
+    await new Function("__x2uImportMeta", code)({ url: "u" });
+    await new Promise((resolve) => setTimeout(resolve));
+    assert.equal((globalThis as { __got?: number }).__got, 2);
+  });
+
+  it("bundles a module as an async function of import.meta that resolves to its exports", async () => {
+    const esbuild = await loadEsbuild();
+    const { code } = await bundleModule(esbuild, files({ "m.js": "export const url = import.meta.url;\nexport default await Promise.resolve(7);\nexport { url as also };" }), "m.js", { format: "function", define: { "import.meta": "__x2uImportMeta" } });
+    const namespace = await (0, eval)(`(${code})`)({ url: "chrome-extension://id/m.js" });
+    assert.deepEqual({ ...namespace }, { url: "chrome-extension://id/m.js", default: 7, also: "chrome-extension://id/m.js" });
+  });
+
+  it("finds a module's exports when license comments follow them, as esbuild writes them at the end", async () => {
+    const esbuild = await loadEsbuild();
+    const { code } = await bundleModule(esbuild, files({ "m.js": "/*! Licensed under MIT */\nexport const answer = 42;" }), "m.js", { format: "function" });
+    assert.match(code, /\/\*! Licensed under MIT \*\//);
+    assert.deepEqual({ ...(await (0, eval)(`(${code})`)({ url: "u" })) }, { answer: 42 });
+  });
 });
