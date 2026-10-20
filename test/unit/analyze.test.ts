@@ -27,7 +27,7 @@ describe("analyze", () => {
       ["chrome.storage.local.getBytesInUse", "unsupported", ["content"]],
       ["chrome.storage.sync.QUOTA_BYTES", "unsupported", ["content"]],
       ["chrome.storage.local", "supported", ["content"]],
-      ["chrome.dom.openOrClosedShadowRoot", "unsupported", ["content"]],
+      ["chrome.dom.openOrClosedShadowRoot", "partial", ["content"]],
       ["chrome.runtime.getURL", "supported", ["content"]],
       ["extension pages", "unsupported", ["page"]],
     ]);

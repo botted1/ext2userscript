@@ -117,7 +117,8 @@ export function start(
         return readLastError();
       },
     }, ["sendRequest", "onRequest"]);
-    const dom = withFallback(log, "dom", {}, ["openOrClosedShadowRoot"]);
+    // Closed shadow roots stay out of reach: their element's shadowRoot is null.
+    const dom = withFallback(log, "dom", { openOrClosedShadowRoot: (element: Element) => element.shadowRoot }, []);
     // The namespaces Chrome gives content scripts. chrome.tabs and the rest are undefined there, as in Chrome.
     const network = createNetwork({
       gm,

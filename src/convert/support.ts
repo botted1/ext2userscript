@@ -11,7 +11,7 @@ export const CONTENT_NAMESPACES: ReadonlySet<string> = new Set(["runtime", "stor
 
 /** Storage areas, and the members src/runtime/storage.ts implements on them. Any other member is reported unsupported. */
 export const STORAGE_AREAS: ReadonlySet<string> = new Set(["local", "sync", "session"]);
-export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "set", "remove", "clear", "onChanged", "setAccessLevel"]);
+export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "getKeys", "set", "remove", "clear", "onChanged", "setAccessLevel"]);
 
 const OLD_MESSAGING = "the MV2 extension.sendRequest messaging isn't converted";
 
@@ -47,7 +47,7 @@ export const CONTENT_APIS: Readonly<Record<string, Support>> = {
   ...SHARED,
   "runtime.sendMessage": { status: "supported" },
   "runtime.connect": { status: "supported" },
-  "dom.openOrClosedShadowRoot": { status: "unsupported", reason: "a userscript can't reach closed shadow roots" },
+  "dom.openOrClosedShadowRoot": { status: "partial", reason: "returns open shadow roots only: a userscript can't reach closed ones" },
 };
 
 const MENUS: readonly GmMethod[] = ["registerMenuCommand", "unregisterMenuCommand"];

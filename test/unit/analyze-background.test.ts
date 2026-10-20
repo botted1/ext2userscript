@@ -14,7 +14,7 @@ const extension = (manifest: Record<string, unknown>, extra: Record<string, stri
 describe("analyze: the background", () => {
   it("reports background APIs: supported, partial, not converted yet, and never available", async () => {
     const { model, files: all } = extension({ background: { service_worker: "sw.js" } }, {
-      "sw.js": "chrome.runtime.onMessage.addListener(f); chrome.tabs.query({}); chrome.tabs.create({}); chrome.bookmarks.create({}); chrome.webRequest.onBeforeRequest.addListener(f); chrome.storage.local.getKeys();",
+      "sw.js": "chrome.runtime.onMessage.addListener(f); chrome.tabs.query({}); chrome.tabs.create({}); chrome.bookmarks.create({}); chrome.webRequest.onBeforeRequest.addListener(f); chrome.storage.local.getBytesInUse();",
     });
     const result = await bundleBackground(model, all);
     const { entries } = analyze(model, [], { scan: scan(result.background?.code ?? ""), bundle: result });
@@ -24,7 +24,7 @@ describe("analyze: the background", () => {
       ["chrome.tabs.create", "partial", "the new tab's id is known only if the userscript runs on its page"],
       ["chrome.bookmarks.create", "unsupported", "isn't converted yet"],
       ["chrome.webRequest.onBeforeRequest", "unsupported", "not available in userscripts"],
-      ["chrome.storage.local.getKeys", "unsupported", "not implemented yet"],
+      ["chrome.storage.local.getBytesInUse", "unsupported", "not implemented yet"],
     ]);
   });
 

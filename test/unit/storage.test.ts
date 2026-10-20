@@ -9,6 +9,7 @@ import { eventually, sleep } from "../support/time.ts";
 type Changes = Record<string, StorageChange>;
 type StorageArea = {
   get(query?: unknown, callback?: (items: Record<string, unknown>) => void): Promise<Record<string, unknown>> | undefined;
+  getKeys(): Promise<string[]>;
   set(items: Record<string, unknown>, callback?: () => void): Promise<void> | undefined;
   remove(keys: string | string[]): Promise<void>;
   clear(): Promise<void>;
@@ -40,6 +41,14 @@ describe("chrome.storage", () => {
     assert.deepEqual(await storage.local.get("a"), { a: 1 });
     assert.deepEqual(await storage.local.get(["a", "missing"]), { a: 1 });
     assert.deepEqual(await storage.local.get({ a: 0, missing: "default" }), { a: 1, missing: "default" });
+  });
+
+  it("lists its own area's keys", async () => {
+    const storage = tab(createHub());
+    await storage.local.set({ a: 1, "x:y": 3 });
+    await storage.sync.set({ s: 1 });
+    assert.deepEqual((await storage.local.getKeys()).sort(), ["a", "x:y"]);
+    assert.deepEqual(await storage.session.getKeys(), []);
   });
 
   it("supports callbacks", async () => {

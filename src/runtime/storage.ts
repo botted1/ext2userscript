@@ -116,6 +116,7 @@ export function createStorage(gm: Gm, ns: string, log: Logger) {
         }
         if (created) await gm.setValue(k.storageDoorbell, `${Date.now()}:${Math.random()}`);
       }),
+      getKeys: method(log, async () => Object.keys(await all())),
       remove: method(log, async (names: string | string[]) => {
         for (const key of typeof names === "string" ? [names] : names) await gm.deleteValue(fullKey(key));
       }),
@@ -125,7 +126,7 @@ export function createStorage(gm: Gm, ns: string, log: Logger) {
       onChanged: areaChanged[name].event,
       // Every page here is as trusted as the next, so there is no access level to set.
       setAccessLevel: method(log, async () => {}),
-    }, ["getBytesInUse", "getKeys"]);
+    }, ["getBytesInUse"]);
   };
 
   const managed = withFallback(log, "storage.managed", {}, ["get", "getBytesInUse", "getKeys", "onChanged"]);
