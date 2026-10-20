@@ -47,7 +47,7 @@ export const CONTENT_APIS: Readonly<Record<string, Support>> = {
   ...SHARED,
   "runtime.sendMessage": { status: "supported" },
   "runtime.connect": { status: "supported" },
-  "dom.openOrClosedShadowRoot": { status: "unsupported", reason: "a userscript can't reach closed shadow roots" },
+  "dom.openOrClosedShadowRoot": { status: "partial", reason: "returns open shadow roots only: a userscript can't reach closed ones" },
 };
 
 const MENUS: readonly GmMethod[] = ["registerMenuCommand", "unregisterMenuCommand"];

@@ -7,6 +7,7 @@ import type { Assets } from "./assets.ts";
 import type { Logger } from "./chrome.ts";
 import type { GroupCode, RunAt, RuntimeConfig } from "./config.ts";
 import type { Gm } from "./gm.ts";
+import { mainScriptName, shieldFromMainWorld } from "./main-world.ts";
 import { filterMatches } from "./match.ts";
 import type { Network } from "./net.ts";
 import { trustExtensionStrings } from "./trusted.ts";
@@ -19,6 +20,7 @@ export function runContent(config: RuntimeConfig, code: readonly GroupCode[], de
     .map((group, index) => ({ group, index, code: code[index] }))
     .filter(({ group }) => (!inFrame || group.allFrames) && filterMatches(location.href, group));
   if (groups.length === 0) return;
+  if (groups.some(({ code: c }) => typeof c === "string")) shieldFromMainWorld(config.id);
   if (groups.some(({ code: c }) => typeof c === "function")) {
     trustExtensionStrings();
     interceptAssetScripts(deps);
@@ -35,8 +37,10 @@ export function runContent(config: RuntimeConfig, code: readonly GroupCode[], de
     if (c === null || c === undefined) continue;
     const run = () => {
       try {
-        if (typeof c === "string") deps.gm.addElement(root(), "script", { textContent: c }).catch((error: unknown) => deps.log.error(error));
-        else withGlobals(deps.chrome, c(deps.chrome, deps.chrome, deps.network.fetch, deps.network.XMLHttpRequest));
+        if (typeof c === "string") {
+          const textContent = `${c}\n//# sourceURL=${mainScriptName(config.id, index)}`;
+          deps.gm.addElement(root(), "script", { textContent }).catch((error: unknown) => deps.log.error(error));
+        } else withGlobals(deps.chrome, c(deps.chrome, deps.chrome, deps.network.fetch, deps.network.XMLHttpRequest));
       } catch (error) {
         deps.log.error(`content_scripts[${index}] failed:`, error);
       }

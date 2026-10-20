@@ -11,7 +11,7 @@ type Policy = { createHTML(text: string): unknown; createScriptURL(url: string):
  * The wrappers' name in stack frames. It is a method key, so minifying keeps it: a second converted userscript in the
  * same world wraps these wrappers, and each runtime skips the other's frames to find the code that called the sink.
  */
-const SINK = "__x2uTrustedSink";
+export const SINK = "__x2uTrustedSink";
 type Factory = { createPolicy(name: string, rules: object): Policy };
 
 /** The script a stack frame ("    at f (url:1:2)" or "    at url:1:2") belongs to. */
