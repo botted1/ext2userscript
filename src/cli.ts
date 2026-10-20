@@ -1,5 +1,6 @@
 // The ext2userscript command line (spec §7): convert, download and report.
 // Run it with: npm run cli -- <command> <source> [options]
+import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -125,4 +126,5 @@ function archiveExtension(bytes: Uint8Array, firefox: boolean): string {
   return firefox ? "xpi" : "zip";
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = await main(process.argv.slice(2));
+// realpath: npm installs the command as a symlink to dist/cli.js, and import.meta.url is the file's real path.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
