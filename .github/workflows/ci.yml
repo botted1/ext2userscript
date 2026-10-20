@@ -14,6 +14,7 @@ jobs:
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:package
       - run: npm run test:browser
   bench:
     runs-on: ubuntu-latest
