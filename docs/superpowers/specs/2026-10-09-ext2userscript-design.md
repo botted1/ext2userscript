@@ -189,8 +189,8 @@ type Report = {
 ```
 
 How the verdict is derived:
-- `unlikely` if any unsupported entry sits in a context the extension relies on: background, or content scripts.
-- `partial` if there are partial entries, or unsupported entries in other contexts (popup, options, page).
+- `unlikely` if an unsupported entry is a manifest feature (a surface the extension is built around: `chrome_url_overrides`, `devtools_page`, `declarative_net_request`, MV2's `webRequestBlocking`, …), or sits in the extension's core: its content scripts, or its background when it has none.
+- `partial` if there are partial entries, or unsupported ones outside the core.
 - Otherwise `likely-works`.
 
 The CLI prints a table and can write `--report report.json`. The web app renders the same data.
