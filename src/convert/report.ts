@@ -14,12 +14,15 @@ export type Report = {
   warnings: string[];
 };
 
-/** The contexts an extension can't do without: if one of them hits something unsupported, it's unlikely to work. */
-const RELIED_ON: ReadonlySet<Context> = new Set(["background", "content"]);
 const STATUS_ORDER: readonly Status[] = ["unsupported", "partial", "supported"];
 
-export function verdictOf(entries: readonly ReportEntry[]): Verdict {
-  if (entries.some((entry) => entry.status === "unsupported" && entry.contexts.some((context) => RELIED_ON.has(context)))) return "unlikely";
+/**
+ * Unlikely when the extension's core can't work: a manifest feature a userscript can't provide, or something unsupported
+ * where the extension does its work, core (its content scripts or, without them, its background). Unsupported calls
+ * elsewhere are usually side features (an update check, a welcome page, a sign-in), so they make it partial.
+ */
+export function verdictOf(entries: readonly ReportEntry[], core: Context): Verdict {
+  if (entries.some((entry) => entry.status === "unsupported" && (entry.subject.startsWith("manifest.") || entry.contexts.includes(core)))) return "unlikely";
   return entries.some((entry) => entry.status !== "supported") ? "partial" : "likely-works";
 }
 

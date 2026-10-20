@@ -103,6 +103,10 @@ export function analyze(
   const opened: Support = { status: "supported", methods: ["registerMenuCommand", "unregisterMenuCommand"] };
   if (model.popup) use(`manifest.${model.popup.key}.default_popup`, opened, "popup");
   if (model.options) use(`manifest.${model.options.key}`, opened, "options");
+  // MV2's blocking webRequest: an extension that asks for it is built to block or change requests (uBlock Origin).
+  if (model.permissions.includes("webRequestBlocking")) {
+    add("manifest.permissions.webRequestBlocking", "unsupported", "a userscript can't block or change network requests", "background");
+  }
   for (const [key, { reason, context }] of Object.entries(UNSUPPORTED_MANIFEST_KEYS)) {
     if (model.raw[key] !== undefined) add(`manifest.${key}`, "unsupported", reason, context);
   }

@@ -112,4 +112,17 @@ describe("inspect", () => {
   it("reports a plain content-script extension as likely-works", async () => {
     assert.equal((await inspect(plainExtension())).verdict, "likely-works");
   });
+
+  it("judges by the content scripts when there are some, and by the background otherwise", async () => {
+    const extension = (contentScripts: boolean) => {
+      const all = plainExtension();
+      const manifest = JSON.parse(new TextDecoder().decode(all.get("manifest.json")));
+      if (!contentScripts) delete manifest.content_scripts;
+      all.set("manifest.json", new TextEncoder().encode(JSON.stringify({ ...manifest, background: { service_worker: "bg.js" } })));
+      all.set("bg.js", new TextEncoder().encode("chrome.bookmarks.getTree();"));
+      return all;
+    };
+    assert.equal((await inspect(extension(true))).verdict, "partial");
+    assert.equal((await inspect(extension(false))).verdict, "unlikely");
+  });
 });

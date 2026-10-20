@@ -171,7 +171,7 @@ export const OUT_OF_SCOPE: ReadonlySet<string> = new Set([
   "webRequest", "declarativeNetRequest", "proxy", "identity", "offscreen", "sidePanel", "devtools", "debugger", "tabCapture", "downloads",
 ]);
 
-/** Manifest keys for browser features a userscript can't provide. The extension relies on them like on its background. */
+/** Manifest keys for browser features a userscript can't provide. An extension that declares one is built around it. */
 export const UNSUPPORTED_MANIFEST_KEYS: Readonly<Record<string, { reason: string; context: Context }>> = {
   chrome_url_overrides: { reason: "a userscript can't replace browser pages", context: "background" },
   devtools_page: { reason: "a userscript can't add developer tools panels", context: "background" },

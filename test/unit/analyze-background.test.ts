@@ -28,6 +28,12 @@ describe("analyze: the background", () => {
     ]);
   });
 
+  it("reports MV2's blocking webRequest as a manifest feature a userscript can't provide", () => {
+    const { model } = extension({ manifest_version: 2, permissions: ["webRequest", "webRequestBlocking", "<all_urls>"], background: { scripts: ["bg.js"] } }, {});
+    const { entries } = analyze(model, [], { scan: scan(""), bundle: { dynamicImportScripts: false, remoteImports: [] } });
+    assert.deepEqual(entries.filter((entry) => entry.status === "unsupported").map((entry) => entry.subject), ["manifest.permissions.webRequestBlocking"]);
+  });
+
   it("reports Chrome's enum constants and storage access levels as supported", () => {
     const { model } = extension({ background: { service_worker: "sw.js" } }, {});
     const code = [

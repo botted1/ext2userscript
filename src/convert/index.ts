@@ -110,7 +110,7 @@ async function prepare(
   };
   const report: Report = {
     extension: { name: model.name, version: model.version, manifestVersion: model.manifestVersion, id },
-    verdict: verdictOf(entries),
+    verdict: verdictOf(entries, model.contentScripts.length > 0 ? "content" : "background"),
     entries: sortEntries(entries),
     warnings: [...manifestWarnings, ...bundleWarnings, ...background.warnings, ...pageWarnings, ...assets.warnings],
   };

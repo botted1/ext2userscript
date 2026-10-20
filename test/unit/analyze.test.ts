@@ -97,19 +97,24 @@ describe("analyze", () => {
 });
 
 describe("verdictOf", () => {
-  const entry = (status: ReportEntry["status"], context: ReportEntry["contexts"][number]): ReportEntry => ({ subject: "x", status, contexts: [context] });
+  const entry = (status: ReportEntry["status"], context: ReportEntry["contexts"][number], subject = "chrome.x.y"): ReportEntry => ({ subject, status, contexts: [context] });
 
-  it("is unlikely when something unsupported sits in the background or content scripts", () => {
-    assert.equal(verdictOf([entry("unsupported", "content")]), "unlikely");
-    assert.equal(verdictOf([entry("unsupported", "background")]), "unlikely");
+  it("is unlikely when something unsupported sits in the extension's core", () => {
+    assert.equal(verdictOf([entry("unsupported", "content")], "content"), "unlikely");
+    assert.equal(verdictOf([entry("unsupported", "background")], "background"), "unlikely");
   });
 
-  it("is partial for partial entries, or unsupported ones elsewhere", () => {
-    assert.equal(verdictOf([entry("partial", "content")]), "partial");
-    assert.equal(verdictOf([entry("unsupported", "popup")]), "partial");
+  it("is unlikely for a manifest feature a userscript can't provide, wherever it sits", () => {
+    assert.equal(verdictOf([entry("unsupported", "background", "manifest.chrome_url_overrides")], "content"), "unlikely");
   });
 
-  it("is likely-works otherwise", () => assert.equal(verdictOf([entry("supported", "content")]), "likely-works"));
+  it("is partial for partial entries, or unsupported ones outside the core", () => {
+    assert.equal(verdictOf([entry("partial", "content")], "content"), "partial");
+    assert.equal(verdictOf([entry("unsupported", "background")], "content"), "partial");
+    assert.equal(verdictOf([entry("unsupported", "popup")], "background"), "partial");
+  });
+
+  it("is likely-works otherwise", () => assert.equal(verdictOf([entry("supported", "content")], "content"), "likely-works"));
 });
 
 describe("formatReport", () => {
