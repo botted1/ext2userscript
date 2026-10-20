@@ -12,10 +12,12 @@ options"), the toolbar button's shortcut, `action.openPopup` or `runtime.openOpt
 convert.
 
 ```bash
-npm run cli -- convert <source> [-o out.user.js] [--report report.json] [--locale xx] [--minify] [--ignore-assets glob,...] [--force]
-npm run cli -- download <source> [-o file]
-npm run cli -- report <source>
+npx ext2userscript convert <source> [-o out.user.js] [--report report.json] [--locale xx] [--minify] [--ignore-assets glob,...] [--force]
+npx ext2userscript download <source> [-o file]
+npx ext2userscript report <source>
 ```
+
+It needs Node 22.16 or newer. `npm install -g ext2userscript` installs the `ext2userscript` command.
 
 `<source>` is a Chrome Web Store URL or ID, an AMO URL or slug, an Edge Add-ons URL, a `.crx`/`.xpi`/`.zip` URL, a
 local archive or a folder. Exit codes: 0 done, 1 error, 2 converted but the verdict is "unlikely".
@@ -36,6 +38,8 @@ Requires Node 22.16 or newer.
     npm test               # unit tests
     npm run test:browser   # browser tests against the CI emulator
     npm run typecheck
+    npm run cli -- <command> <source>   # the CLI, from source
+    npm run test:package   # npm pack, install the tarball and run its command (npm pack builds dist/cli.js)
 
 ### Benchmark
 
