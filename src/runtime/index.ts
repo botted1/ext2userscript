@@ -117,8 +117,9 @@ export function start(
         return readLastError();
       },
     }, ["sendRequest", "onRequest"]);
-    // Closed shadow roots stay out of reach: their element's shadowRoot is null.
-    const dom = withFallback(log, "dom", { openOrClosedShadowRoot: (element: Element) => element.shadowRoot }, []);
+    // Not element.shadowRoot: Dark Reader would then go on to its dark-theme check, which Tampermonkey breaks (the page's
+    // patched Document.prototype.styleSheets is the userscript's too), and drop its theme from every page.
+    const dom = withFallback(log, "dom", {}, ["openOrClosedShadowRoot"]);
     // The namespaces Chrome gives content scripts. chrome.tabs and the rest are undefined there, as in Chrome.
     const network = createNetwork({
       gm,

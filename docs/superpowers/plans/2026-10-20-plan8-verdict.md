@@ -9,9 +9,13 @@
 - **partial** if anything else isn't fully supported.
 - **likely-works** otherwise.
 
-Two content-script entries that would trip the new rule are fixed in the runtime rather than in the rule:
-- `storage.<area>.getKeys` (Refined GitHub) is a one-line implementation.
-- `dom.openOrClosedShadowRoot` (Dark Reader, used only for Chrome's PDF viewer) now returns `element.shadowRoot`. Today it's faked with a rejected Promise, which the caller then dereferences and throws.
+Two content-script entries trip the new rule:
+- `storage.<area>.getKeys` (Refined GitHub) gets its one-line implementation.
+- `dom.openOrClosedShadowRoot` (Dark Reader, used only for Chrome's PDF viewer) stays a fake that rejects, so Dark Reader stays "unlikely".
+  - Returning `element.shadowRoot` (the first version of Task 1) broke Dark Reader on Tampermonkey, measured by the gate: 3 of 3 failures on the branch, a pass on main.
+  - Root cause: the fake's TypeError used to abort Dark Reader's message handler before its "is this site already dark?" check. With a real answer the check runs.
+  - The check disables Dark Reader's own sheets, found through `document.styleSheets`, then samples colours. Dark Reader's MAIN-world `proxy.js` patches `Document.prototype.styleSheets` to hide those sheets from the site, and Tampermonkey shares DOM prototypes with the page. So the userscript sees no Dark Reader sheets, reads Dark Reader's own colours as the site's, and removes the theme from every page.
+  - Violentmonkey isolates properly. Fixing the leak is a follow-up, with no clear design yet.
 
 One regression guard: MV2's `webRequestBlocking` permission becomes the unsupported entry `manifest.permissions.webRequestBlocking`. Without it, uBlock Origin on Firefox would move from "unlikely" to "partial", because it has content scripts.
 
@@ -20,14 +24,15 @@ One regression guard: MV2's `webRequestBlocking` permission becomes the unsuppor
 | Check | Result |
 |---|---|
 | Unit tests | 426 of 426 (422 + 4 new). Each new or changed test fails without its fix, except the manifest-verdict and getBytesInUse ones, which pass on the old rule and guard the new one. `tsc` clean |
-| `inspect` on all 23 cached corpus archives | Every browser case: partial or likely-works. The 3 negatives: unlikely, naming the same subjects as before |
+| `inspect` on all 23 cached corpus archives | 19 of 20 browser cases: partial or likely-works; Dark Reader: unlikely (above). The 3 negatives: unlikely, naming the same subjects as before |
 | Browser bench | Not run in the prototype; Task 4 |
 
 Corpus verdicts, before → after:
 
 | Extension | Before | After |
 |---|---|---|
-| Augmented Steam, BetterTTV, Dark Reader, Enhanced GitHub, Improve YouTube!, Octotree, Reddit Enhancement Suite, Refined GitHub, Return YouTube Dislike, SponsorBlock, uBlacklist, Web Search Navigator | unlikely | partial |
+| Augmented Steam, BetterTTV, Enhanced GitHub, Improve YouTube!, Octotree, Reddit Enhancement Suite, Refined GitHub, Return YouTube Dislike, SponsorBlock, uBlacklist, Web Search Navigator | unlikely | partial |
+| Dark Reader | unlikely | unlikely (`chrome.dom.openOrClosedShadowRoot` in its content script) |
 | Iridium, Material Icons for GitHub, Modern for HN, Modern for Wikipedia, Modrinth Extras, Unhook | partial | partial |
 | JSON Formatter, LeetCode Enhancer | likely-works | likely-works |
 | Momentum, React Developer Tools, uBlock Origin Lite (negatives) | unlikely | unlikely |
@@ -37,12 +42,13 @@ Corpus verdicts, before → after:
 **Skipped:**
 - A reason line under the verdict ("unlikely: manifest.devtools_page"). Add it if users ask why.
 - A bench criterion that no case ext2userscript passes is reported unlikely (deferred by the user, 2026-10-20). Until it lands, nothing re-checks the corpus verdicts automatically; Task 4 checks them once by hand.
+- Shielding extension code from the page world's prototype patches on Tampermonkey, which would let `dom.openOrClosedShadowRoot` return open roots and Dark Reader read "partial". Its own follow-up.
 
 ---
 
-## Task 1: Implement `storage.getKeys` and `dom.openOrClosedShadowRoot`
+## Task 1: Implement `storage.getKeys`
 
-**Files:** `src/runtime/storage.ts`, `src/runtime/index.ts`, `src/convert/support.ts`, `test/unit/storage.test.ts`, `test/unit/analyze.test.ts`, `test/unit/analyze-background.test.ts`
+**Files:** `src/runtime/storage.ts`, `src/convert/support.ts`, `test/unit/storage.test.ts`, `test/unit/analyze-background.test.ts`
 
 ```diff
 --- a/src/runtime/storage.ts
@@ -59,22 +65,10 @@ Corpus verdicts, before → after:
 ```
 
 ```diff
---- a/src/runtime/index.ts
-+++ b/src/runtime/index.ts
-@@ -118,5 +118,6 @@
--    const dom = withFallback(log, "dom", {}, ["openOrClosedShadowRoot"]);
-+    // Closed shadow roots stay out of reach: their element's shadowRoot is null.
-+    const dom = withFallback(log, "dom", { openOrClosedShadowRoot: (element: Element) => element.shadowRoot }, []);
-```
-
-```diff
 --- a/src/convert/support.ts
 +++ b/src/convert/support.ts
 -export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "set", "remove", "clear", "onChanged", "setAccessLevel"]);
 +export const STORAGE_AREA_MEMBERS: ReadonlySet<string> = new Set(["get", "getKeys", "set", "remove", "clear", "onChanged", "setAccessLevel"]);
-@@
--  "dom.openOrClosedShadowRoot": { status: "unsupported", reason: "a userscript can't reach closed shadow roots" },
-+  "dom.openOrClosedShadowRoot": { status: "partial", reason: "returns open shadow roots only: a userscript can't reach closed ones" },
 ```
 
 Tests:
@@ -88,10 +82,17 @@ Tests:
     assert.deepEqual(await storage.session.getKeys(), []);
   });
   ```
-- `test/unit/analyze.test.ts`: the `chrome.dom.openOrClosedShadowRoot` row becomes `"partial"`.
 - `test/unit/analyze-background.test.ts`: in "reports background APIs: …", swap `chrome.storage.local.getKeys()` for `chrome.storage.local.getBytesInUse()` in `sw.js` and in the expected row (it is still the unimplemented member).
 
-Run `npm run test:file -- test/unit/storage.test.ts test/unit/analyze.test.ts test/unit/analyze-background.test.ts`. Commit: "Implement storage getKeys, and openOrClosedShadowRoot for open shadow roots".
+Also add, above the `dom` fake in `src/runtime/index.ts`, why it stays a fake:
+```ts
+    // Not element.shadowRoot: Dark Reader would then go on to its dark-theme check, which Tampermonkey breaks (the page's
+    // patched Document.prototype.styleSheets is the userscript's too), and drop its theme from every page.
+```
+
+As executed: Task 1 first also implemented `dom.openOrClosedShadowRoot` (db6a47c). The gate caught the Tampermonkey break, and a later commit took it out again.
+
+Run `npm run test:file -- test/unit/storage.test.ts test/unit/analyze-background.test.ts`. Commit: "Implement storage getKeys".
 
 ## Task 2: Judge the verdict by the extension's core
 
@@ -206,5 +207,5 @@ Commit: "Spec: the verdict judges the extension's core".
 ## Task 4: Verify
 
 1. `npm run typecheck` and `npm test -- --test-concurrency=2`: 426 of 426.
-2. `npm run cli -- report <archive>` on every archive in `bench/.cache/archives` (in the plan1-foundation worktree). The 20 browser cases exit 0 with "partial" or "likely-works", matching the table above. Momentum, React Developer Tools and uBlock Origin Lite exit 2 with "unlikely".
+2. `npm run cli -- report <archive>` on every archive in `bench/.cache/archives` (in the plan1-foundation worktree). 19 browser cases exit 0 with "partial" or "likely-works", matching the table above. Dark Reader, Momentum, React Developer Tools and uBlock Origin Lite exit 2 with "unlikely".
 3. `X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate`: all met on each backend, as after Plan 7. It needs the bench profile (`npm run bench:setup` was done 2026-10-10) and a quiet machine.
