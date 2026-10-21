@@ -1,7 +1,8 @@
 // Runs the corpus (spec §10.4) for ext2userscript and the baseline on each backend in X2U_BACKENDS (default: the
 // emulator), and writes a scorecard per backend to bench/.cache/scorecard-<backend>.md. Each browser case also runs
 // once against the original extension, the reference.
-// Usage: npm run bench [-- --case id[,id…]] [--gate]. --gate exits 1 unless the ship criteria are met (a release needs it).
+// Usage: [X2U_BASELINE=name@version] npm run bench [-- --case id[,id…]] [--gate]. --gate exits 1 unless the ship criteria
+// are met (a release needs it), and compares with a baseline, so it needs X2U_BASELINE.
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import { archiveOf, CACHE, loadCorpus, selectCases, type Archive, type CorpusEnt
 import { startReference } from "./reference.ts";
 import { criteria, scorecard } from "./scorecard.ts";
 import { backendsFromEnv, startSession, type Backend, type Session } from "./session.ts";
-import { convertWith, baselineVersion } from "./tools.ts";
+import { baselineSpec, baselineVersion, convertWith } from "./tools.ts";
 
 const CASE_TIMEOUT_MS = 120_000;
 
@@ -76,6 +77,7 @@ export async function runCase(tool: Tool, entry: CorpusEntry, archive: Archive, 
     if (missing.length > 0) return { result: "fail", detail: `the report doesn't name ${missing.join(", ")} as unsupported` };
     return { result: "pass" };
   }
+  if (tool === "baseline" && !baselineSpec()) return { result: "n/a", detail: "no X2U_BASELINE" };
   let userscript: string;
   try {
     ({ userscript } = await convertWith(tool, entry, archive));
@@ -119,7 +121,7 @@ export async function runCorpus(
       archive = await getArchive(entry);
     } catch (error) {
       const failed: Outcome = { result: "fail", detail: `couldn't get the archive: ${firstLine(error)}` };
-      for (const backend of backends) results.get(backend)?.push({ entry, version: entry.version, drifted: false, reference: failed, outcomes: { ext2userscript: failed, "baseline": failed } });
+      for (const backend of backends) results.get(backend)?.push({ entry, version: entry.version, drifted: false, reference: failed, outcomes: { ext2userscript: failed, baseline: failed } });
       console.log(`${entry.id}: ${failed.detail}`);
       continue;
     }
@@ -137,6 +139,8 @@ export async function runCorpus(
 
 if (process.argv[1] === import.meta.filename) {
   const args = process.argv.slice(2);
+  // The ship criteria compare with a baseline: without one, the gate could only fail, after the whole run.
+  if (args.includes("--gate") && !baselineSpec()) throw new Error("--gate compares with a baseline: set X2U_BASELINE to its npm spec (name@version)");
   const entries = selectCases(await loadCorpus(), args);
   const commit = await promisify(execFile)("git", ["rev-parse", "--short", "HEAD"]).then(({ stdout }) => stdout.trim(), () => "(not a git checkout)");
   const baseline = await baselineVersion();

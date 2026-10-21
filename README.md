@@ -44,11 +44,11 @@ Requires Node 22.16 or newer.
 
 ### Benchmark
 
-The benchmark converts 23 pinned extensions with ext2userscript and with the baseline, runs each case against the original extension and both userscripts, and writes a scorecard against v1's ship criteria (spec §1 and §10).
+The benchmark converts 23 pinned extensions with ext2userscript, runs each case against the original extension and the userscript, and writes a scorecard against v1's ship criteria (spec §1 and §10). With `X2U_BASELINE` set to another converter's npm spec (`name@version`, run as `npx <spec> convert <archive> -o <out> --no-minify --force`), it converts with that too and compares the two.
 
     npm run bench                                       # the corpus on the CI emulator; scorecard in bench/.cache/scorecard-emulator.md
     npm run bench -- --case json-formatter,dark-reader  # some cases only
-    X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate # the release gate, also on real Tampermonkey and Violentmonkey
+    X2U_BASELINE=name@1.2.3 X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate # the release gate, also on real managers
     npm run bench:pin                                   # re-pin the cases to the stores' current versions
 
 The release gate needs `npm run bench:setup` once; `BENCH_PROFILE` points it at another profile. The first run downloads the 23 archives into `bench/.cache/`, which is never committed.

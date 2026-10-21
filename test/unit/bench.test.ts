@@ -20,7 +20,7 @@ const PASS: Outcome = { result: "pass" };
 const FAIL: Outcome = { result: "fail", detail: "no effect" };
 const NA: Outcome = { result: "n/a" };
 const result = (id: string, kind: CorpusEntry["kind"], ours: Outcome, theirs: Outcome, reference: Outcome = kind === "negative" ? NA : PASS): CaseResult => ({
-  entry: entry(id, kind), version: "1.0", drifted: false, reference, outcomes: { ext2userscript: ours, "baseline": theirs },
+  entry: entry(id, kind), version: "1.0", drifted: false, reference, outcomes: { ext2userscript: ours, baseline: theirs },
 });
 
 describe("criteria", () => {
@@ -64,7 +64,7 @@ describe("scorecard", () => {
     const card = scorecard([drifted, result("mv2", "legacy", PASS, PASS, { result: "n/a", detail: "Manifest V2" })], {
       backend: "emulator", baseline: "0.1.4", commit: "abc1234", date: "2026-10-19",
     });
-    assert.match(card, /2026-10-19, backend emulator, ext2userscript abc1234, the baseline 0\.1\.4/);
+    assert.match(card, /2026-10-19, backend emulator, ext2userscript abc1234, baseline 0\.1\.4/);
     assert.match(card, /\| rg \| modern \| 2\.0 \(pinned 1\.0\) \| pass \| fail: a \\\| b c \| fail: no effect \|/);
     assert.match(card, /\| mv2 \| legacy \| 1\.0 \| n\/a \(Manifest V2\) \| pass \| pass \|/);
     assert.match(card, /- \[x\] Passes every case the baseline passes: 1 of 1, 100%/);
@@ -179,6 +179,14 @@ describe("runCase on a browser case", () => {
 });
 
 describe("runCase with the baseline", () => {
+  it("is n/a without X2U_BASELINE, without running anything", async (t) => {
+    const before = process.env.X2U_BASELINE;
+    t.after(() => (before === undefined ? delete process.env.X2U_BASELINE : (process.env.X2U_BASELINE = before)));
+    delete process.env.X2U_BASELINE;
+    const archive = { path: "/nonexistent/t.crx", bytes: new Uint8Array(), version: "1", sha256: "", drifted: false };
+    assert.deepEqual(await runCase("baseline", entry("t", "modern"), archive, { run: async () => {} }, "emulator"), { result: "n/a", detail: "no X2U_BASELINE" });
+  });
+
   it("fails when the baseline can't run, with npm's reason and not just the command", async (t) => {
     const before = process.env.X2U_BASELINE;
     t.after(() => (before === undefined ? delete process.env.X2U_BASELINE : (process.env.X2U_BASELINE = before)));
@@ -219,7 +227,7 @@ describe("runCorpus", () => {
     });
     const failed = { result: "fail", detail: "couldn't get the archive: The download is empty" };
     for (const backend of ["emulator", "tm"] as const) {
-      assert.deepEqual(results.get(backend)?.map(({ reference, outcomes }) => ({ reference, outcomes })), [{ reference: failed, outcomes: { ext2userscript: failed, "baseline": failed } }]);
+      assert.deepEqual(results.get(backend)?.map(({ reference, outcomes }) => ({ reference, outcomes })), [{ reference: failed, outcomes: { ext2userscript: failed, baseline: failed } }]);
     }
   });
 });

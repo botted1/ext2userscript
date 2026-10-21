@@ -13,6 +13,8 @@ A public, open-source converter that turns a browser extension (Chrome or Firefo
 - passes at least 75% of the modern MV3 cases that the baseline fails, and
 - produces an accurate compatibility report for every "negative" case (extensions that rely on unsupported APIs).
 
+The baseline is another converter, which the release names by its npm spec in `X2U_BASELINE` (§10.5).
+
 ### Decisions taken during brainstorming
 
 | Topic | Decision |
@@ -440,10 +442,10 @@ Each case records: `id`, `store`, `extensionId`, `version`, `sha256`, `kind` (`l
   - Manifest V2 cases have no reference, because Chromium no longer loads MV2.
 
 ### 10.5 Tiers
-- **CI (every push):** unit, runtime, conformance against the emulator, and the full corpus against the emulator. Results go to a scorecard (Markdown) that compares ext2userscript with the baseline (latest npm version) on the same corpus.
+- **CI (every push):** unit, runtime, conformance against the emulator, and the full corpus against the emulator. Results go to a scorecard (Markdown) that compares ext2userscript with the baseline, when `X2U_BASELINE` names one, on the same corpus.
   - A `bench` job runs `npm run bench` on the emulator and adds the scorecard to the job summary. It doesn't fail the build.
 - **Release (manual, local):** the same corpus and conformance suite run against real Tampermonkey and Violentmonkey in Chrome for Testing, using a persistent profile where "Allow User Scripts" was switched on once by hand. Its path is passed as `BENCH_PROFILE`. A release needs both tiers green.
-  - `X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate` exits 1 unless the criteria are met on every backend, with every case conclusive.
+  - `X2U_BASELINE=<name@version> X2U_BACKENDS=emulator,tm,vm npm run bench -- --gate` exits 1 unless the criteria are met on every backend, with every case conclusive. The baseline runs as `npx <spec> convert <archive> -o <out> --no-minify --force`; without `X2U_BASELINE` the gate refuses to start, and a plain run marks the baseline n/a.
   - Each real-manager session runs on its own copy of `BENCH_PROFILE`, without its caches, so a case runs only its own userscript.
 
 ## 11. Early spikes (plan phase 0, before the main build)

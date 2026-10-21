@@ -21,9 +21,9 @@ export function criteria(results: readonly CaseResult[]): Criteria {
   const inconclusive = results.filter((result) => result.reference.result === "fail").map((result) => result.entry.id);
   const counted = results.filter((result) => result.reference.result !== "fail");
   const positive = counted.filter((result) => result.entry.kind !== "negative");
-  const theirs = positive.filter((result) => passes(result.outcomes["baseline"]));
+  const theirs = positive.filter((result) => passes(result.outcomes.baseline));
   const matched: [number, number] = [theirs.filter((result) => passes(result.outcomes.ext2userscript)).length, theirs.length];
-  const failed = positive.filter((result) => result.entry.kind === "modern" && !passes(result.outcomes["baseline"]));
+  const failed = positive.filter((result) => result.entry.kind === "modern" && !passes(result.outcomes.baseline));
   const modern: [number, number] = [failed.filter((result) => passes(result.outcomes.ext2userscript)).length, failed.length];
   const negative = counted.filter((result) => result.entry.kind === "negative");
   const negatives: [number, number] = [negative.filter((result) => passes(result.outcomes.ext2userscript)).length, negative.length];
@@ -43,13 +43,13 @@ export function scorecard(results: readonly CaseResult[], meta: { backend: strin
   return [
     "# Benchmark scorecard",
     "",
-    `${meta.date}, backend ${meta.backend}, ext2userscript ${meta.commit}, the baseline ${meta.baseline}`,
+    `${meta.date}, backend ${meta.backend}, ext2userscript ${meta.commit}, baseline ${meta.baseline}`,
     "",
-    "| Case | Kind | Version | Original | ext2userscript | the baseline |",
+    "| Case | Kind | Version | Original | ext2userscript | Baseline |",
     "|---|---|---|---|---|---|",
     ...results.map((result) => {
       const version = result.drifted ? `${result.version} (pinned ${result.entry.version})` : result.version;
-      return `| ${result.entry.name} | ${result.entry.kind} | ${version} | ${cell(result.reference)} | ${cell(result.outcomes.ext2userscript)} | ${cell(result.outcomes["baseline"])} |`;
+      return `| ${result.entry.name} | ${result.entry.kind} | ${version} | ${cell(result.reference)} | ${cell(result.outcomes.ext2userscript)} | ${cell(result.outcomes.baseline)} |`;
     }),
     "",
     "## Ship criteria (spec §1)",
