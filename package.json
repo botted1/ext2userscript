@@ -1,6 +1,6 @@
 {
   "name": "ext2userscript",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Convert browser extensions into userscripts for Tampermonkey and Violentmonkey",
   "license": "MIT",
   "repository": {
