@@ -64,7 +64,7 @@ async function prepare(
     model,
     scans,
     backgroundScan ? { scan: backgroundScan, bundle: background } : undefined,
-    pages.map((page, i) => ({ kind: page.kind, scan: pageScans[i] })),
+    pages.map((page, i) => ({ kind: page.kind, scan: pageScans[i], remoteImports: page.remoteImports })),
   );
   // Files the background names that it may inject: scripts are bundled like content scripts, style sheets go in the asset table.
   // "./js/a.js" and "/js/a.js" name the same file as "js/a.js", as in Chrome.

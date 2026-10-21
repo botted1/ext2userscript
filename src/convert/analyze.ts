@@ -22,7 +22,7 @@ export function analyze(
   model: Model,
   scans: ReadonlyArray<ScanResult | undefined>,
   background?: BackgroundScan,
-  pages: ReadonlyArray<{ kind: "popup" | "options"; scan: ScanResult }> = [],
+  pages: ReadonlyArray<{ kind: "popup" | "options"; scan: ScanResult; remoteImports?: readonly string[] }> = [],
 ): { entries: ReportEntry[]; methods: Set<GmMethod> } {
   const entries = new Map<string, ReportEntry>();
   const methods = new Set<GmMethod>();
@@ -98,10 +98,12 @@ export function analyze(
   for (const page of pages) {
     chains(page.scan, page.kind);
     siteGlobals(page.scan, page.kind);
+    for (const url of page.remoteImports ?? []) add(`import ${url}`, "unsupported", "remote modules can't be bundled", page.kind);
   }
-  // The pages open from menu commands (spec §6).
+  // The pages open from menu commands (spec §6), and a button without a popup is one too, whatever the code calls.
   const opened: Support = { status: "supported", methods: ["registerMenuCommand", "unregisterMenuCommand"] };
   if (model.popup) use(`manifest.${model.popup.key}.default_popup`, opened, "popup");
+  else if (model.action) use(`manifest.${model.action.key}`, opened, "background");
   if (model.options) use(`manifest.${model.options.key}`, opened, "options");
   // MV2's blocking webRequest: an extension that asks for it is built to block or change requests (uBlock Origin).
   if (model.permissions.includes("webRequestBlocking")) {

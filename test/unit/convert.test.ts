@@ -80,6 +80,15 @@ describe("convert", () => {
     assert.deepEqual(Object.keys(config.assets), ["config/sites.config"]);
   });
 
+  it("grants menu commands for a toolbar button without a popup, whatever the background calls", async () => {
+    const all = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "T", version: "1", action: { default_title: "T" }, background: { service_worker: "bg.js" } }),
+      "bg.js": "chrome.action.setIcon({ path: 'a.png' });",
+    });
+    const { userscript } = await convert(all, { runtime });
+    assert.match(userscript.slice(0, userscript.indexOf("// ==/UserScript==")), /\/\/ @grant {8}GM_registerMenuCommand\n/);
+  });
+
   it("grants GM_openInTab when the extension opens tabs or windows", async () => {
     const header = async (code: string) => {
       const all = files({ "manifest.json": JSON.stringify({ manifest_version: 3, name: "T", version: "1", background: { service_worker: "bg.js" } }), "bg.js": code });

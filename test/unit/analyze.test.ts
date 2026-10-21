@@ -58,14 +58,17 @@ describe("analyze", () => {
   });
 
   it("reports what the popup and options pages use, in their own contexts", () => {
-    const code = "chrome.storage.local.get(); chrome.alarms.onAlarm.addListener(f); chrome.runtime.getBackgroundPage(); chrome.bookmarks.create({}); chrome.notifications.create({})";
-    const { entries, methods } = analyze(model({ action: { default_popup: "p.html" } }), [], undefined, [{ kind: "popup", scan: scan(code) }]);
-    assert.deepEqual(entries.filter((entry) => entry.subject.startsWith("chrome.")).map((entry) => [entry.subject, entry.status, entry.contexts]), [
+    const code = "chrome.storage.local.get(); chrome.alarms.onAlarm.addListener(f); chrome.runtime.getBackgroundPage(); chrome.bookmarks.create({}); chrome.notifications.create({}); chrome.tabs.onUpdated.addListener(f)";
+    const popup = { kind: "popup" as const, scan: scan(code), remoteImports: ["https://cdn.test/lib.js"] };
+    const { entries, methods } = analyze(model({ action: { default_popup: "p.html" } }), [], undefined, [popup]);
+    assert.deepEqual(entries.filter((entry) => !entry.subject.startsWith("manifest.")).map((entry) => [entry.subject, entry.status, entry.contexts]), [
       ["chrome.storage.local", "supported", ["popup"]],
       ["chrome.alarms.onAlarm", "partial", ["popup"]],
       ["chrome.runtime.getBackgroundPage", "partial", ["popup"]],
       ["chrome.bookmarks.create", "unsupported", ["popup"]],
       ["chrome.notifications.create", "supported", ["popup"]],
+      ["chrome.tabs.onUpdated", "partial", ["popup"]],
+      ["import https://cdn.test/lib.js", "unsupported", ["popup"]],
     ]);
     assert.ok(methods.has("notification"));
   });

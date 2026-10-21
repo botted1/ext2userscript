@@ -162,6 +162,7 @@ export const PAGE_APIS: Readonly<Record<string, Support>> = {
   ...BACKGROUND_APIS,
   ...Object.fromEntries(BACKGROUND_EVENTS.map((api): [string, Support] => [api, { ...BACKGROUND_APIS[api], status: "partial", reason: BACKGROUND_ONLY }])),
   "runtime.connect": { status: "supported" },
+  ...rows("tabs", ["onCreated", "onRemoved", "onUpdated", "onActivated"], { status: "partial", reason: "fires only in the tab where the background runs" }),
   "runtime.getBackgroundPage": { status: "partial", reason: "works only in the tab where the background runs" },
   "extension.getBackgroundPage": { status: "partial", reason: "works only in the tab where the background runs" },
 };
