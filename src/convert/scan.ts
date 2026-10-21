@@ -49,6 +49,9 @@ const GLOBAL_OWNERS = new Set(["window", "globalThis", "self"]);
 /** Storage and custom elements: a userscript reaches the site's, not an extension page's own. */
 const SITE_GLOBALS = new Set(["indexedDB", "sessionStorage", "customElements"]);
 
+/** XML namespace URIs (createElementNS, setAttributeNS): they name no host the code requests, so no @connect. */
+const NAMESPACE = /^http:\/\/www\.w3\.org\/(?:2000\/svg|1999\/xhtml|1999\/xlink|XML\/1998\/namespace|2000\/xmlns\/|1998\/Math\/MathML)$/;
+
 export function scan(code: string): ScanResult {
   const tokens = tokenize(code);
   const result: ScanResult = { chains: [], urls: [], fetches: [], files: [], paths: [], hosts: [], dynamicImport: false, imports: [], importScripts: [], lexical: [], declarations: [], globals: [] };
@@ -62,7 +65,7 @@ export function scan(code: string): ScanResult {
     if (token.kind === "punct" && (token.value === "(" || token.value === "[")) brackets++;
     else if (token.kind === "punct" && (token.value === ")" || token.value === "]")) brackets--;
     if (token.kind === "string" && /^\/?[\w@~.-]+(?:\/[\w@~.-]+)*\.(?:js|css)$/.test(token.value)) result.files.push(token.value);
-    const host = (token.kind === "string" || token.kind === "template") && /^https?:\/\/([a-z\d.-]+\.[a-z]{2,})(?:[:/?#]|$)/i.exec(token.value)?.[1]?.toLowerCase();
+    const host = (token.kind === "string" || token.kind === "template") && !NAMESPACE.test(token.value) && /^https?:\/\/([a-z\d.-]+\.[a-z]{2,})(?:[:/?#]|$)/i.exec(token.value)?.[1]?.toLowerCase();
     if (host && !result.hosts.includes(host)) result.hosts.push(host);
     if (token.kind === "string" && /^(?:\.\.?\/)*\/?[\w@~-][\w@~.-]*(?:\/[\w@~.-]+)*\.[a-z\d]{1,10}$/i.test(token.value)) result.paths.push(token.value);
     if (token.kind !== "name") continue;

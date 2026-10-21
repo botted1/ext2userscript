@@ -89,5 +89,8 @@ describe("scan", () => {
   it("finds the hosts of http(s) URLs in strings and template heads, once each", () => {
     const { hosts } = scan('fetch("https://API.example.com/v1"); const u = `https://cdn.example.org/x/${path}`; "http://example.com"; "https://example.com/again"; "not https://inside.test"; "https://localhost/"');
     assert.deepEqual(hosts, ["api.example.com", "cdn.example.org", "example.com"]);
+    const svg = scan('document.createElementNS("http://www.w3.org/2000/svg", "svg"); el.setAttributeNS("http://www.w3.org/1999/xlink", "href", x)');
+    assert.deepEqual(svg.hosts, [], "XML namespaces aren't hosts");
+    assert.deepEqual(scan('fetch("https://www.w3.org/TR/")').hosts, ["www.w3.org"]);
   });
 });

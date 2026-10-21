@@ -6,6 +6,13 @@ import { decodeEntities, parseHtml, type HtmlNode } from "../../src/convert/html
 /** A compact form of a tree, for comparing: elements as [name, {attributes}, ...children], text as strings. */
 const shape = (nodes: HtmlNode[]): unknown[] => nodes.map((node) => (node.type === "text" ? node.text : [node.name, Object.fromEntries(node.attributes), ...shape(node.children)]));
 
+describe("decodeEntities", () => {
+  it("decodes Latin-1 and common symbol names, case-sensitively, and leaves unknown names and prototype members as written", () => {
+    assert.equal(decodeEntities("&rsquo;&euro;&Eacute;&eacute;&nbsp;&yuml;&AMP;&check;"), "’€Éé\u00a0ÿ&✓");
+    assert.equal(decodeEntities("&EACUTE; &constructor; &unknown;"), "&EACUTE; &constructor; &unknown;");
+  });
+});
+
 describe("parseHtml", () => {
   it("reads elements, attributes in every quoting style, text and character references, and skips a doctype and comments", () => {
     const html = `<!DOCTYPE html><html lang=en><head><meta charset="utf-8"><title>A &amp; B</title></head><!-- note --><body class='x'><p id=a data-n="1 &lt; 2">Hi&nbsp;there &#128512; &unknown;</p></body></html>`;

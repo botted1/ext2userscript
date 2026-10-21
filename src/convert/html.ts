@@ -26,15 +26,28 @@ const CLOSES: Readonly<Record<string, readonly string[]>> = {
   td: ["td", "th"],
   th: ["td", "th"],
 };
+/** Latin-1's named references, U+00A0 to U+00FF in order. */
+const LATIN1 =
+  "nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest " +
+  "Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig " +
+  "agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml";
+/** Common punctuation, symbols and arrows, as name:code point. */
+const SYMBOLS =
+  "OElig:338 oelig:339 Scaron:352 scaron:353 Yuml:376 fnof:402 circ:710 tilde:732 ensp:8194 emsp:8195 thinsp:8201 zwnj:8204 zwj:8205 lrm:8206 rlm:8207 " +
+  "ndash:8211 mdash:8212 lsquo:8216 rsquo:8217 sbquo:8218 ldquo:8220 rdquo:8221 bdquo:8222 dagger:8224 Dagger:8225 bull:8226 hellip:8230 permil:8240 prime:8242 Prime:8243 " +
+  "lsaquo:8249 rsaquo:8250 euro:8364 trade:8482 larr:8592 uarr:8593 rarr:8594 darr:8595 harr:8596 minus:8722 infin:8734 ne:8800 le:8804 ge:8805 hearts:9829 check:10003 cross:10007";
+// ponytail: about 150 of HTML's 2,231 names, the ones extension pages use; the rest stay as written. Generate the full
+// table from the HTML standard's entities.json if a page needs more.
 const NAMED: Readonly<Record<string, string>> = {
-  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0", copy: "©", reg: "®", trade: "™",
-  hellip: "…", mdash: "—", ndash: "–", laquo: "«", raquo: "»", middot: "·", bull: "•", times: "×",
+  ...Object.fromEntries(LATIN1.split(" ").map((name, i) => [name, String.fromCharCode(0xa0 + i)])),
+  ...Object.fromEntries(SYMBOLS.split(" ").map((pair) => pair.split(":")).map(([name, code]) => [name, String.fromCodePoint(Number(code))])),
+  amp: "&", AMP: "&", lt: "<", LT: "<", gt: ">", GT: ">", quot: '"', QUOT: '"', apos: "'", COPY: "©", REG: "®",
 };
 
-/** Decodes character references; an unknown name stays as written, as browsers leave it. */
+/** Decodes character references; an unknown name stays as written, as browsers leave it. Names are case-sensitive. */
 export function decodeEntities(text: string): string {
   return text.replace(/&(#x[\da-f]+|#\d+|[a-z]+\d*);/gi, (whole, name: string) => {
-    if (name[0] !== "#") return NAMED[name.toLowerCase()] ?? whole;
+    if (name[0] !== "#") return Object.hasOwn(NAMED, name) ? NAMED[name] : whole;
     const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
     return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "\ufffd";
   });
