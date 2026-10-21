@@ -34,7 +34,9 @@ export function shieldFromMainWorld(id: string): void {
   if (!own || own === "<anonymous>") return;
   const isMain = (script: string | undefined) => script?.startsWith(base(id)) === true;
   const prototypes = new WeakSet<object>();
-  for (const name of Object.getOwnPropertyNames(globalThis)) {
+  // Constructors only (capitalised names). Reading window["0"], a frame, would make Chrome create that frame's
+  // about:blank document early; a same-origin page then reuses its window, and the manager never runs in it.
+  for (const name of Object.getOwnPropertyNames(globalThis).filter((key) => /^[A-Z]/.test(key))) {
     const value: unknown = Object.getOwnPropertyDescriptor(globalThis, name)?.value;
     if (typeof value === "function" && typeof value.prototype === "object" && value.prototype) prototypes.add(value.prototype);
   }
