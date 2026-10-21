@@ -37,8 +37,9 @@ export function createI18n(
   /** Chrome's getMessage: "" for an unknown name; $placeholder$ first, then $1–$9 and $$. */
   const getMessage = (name: string, substitutions?: unknown): string => {
     const key = String(name).toLowerCase();
-    if (key in predefined) return predefined[key];
-    const entry = tables.map((table) => table[key]).find((found) => found !== undefined);
+    // Object.hasOwn: a message named like a prototype member ("constructor") isn't one.
+    if (Object.hasOwn(predefined, key)) return predefined[key];
+    const entry = tables.map((table) => (Object.hasOwn(table, key) ? table[key] : undefined)).find((found) => found !== undefined);
     if (!entry) return "";
     const values = (Array.isArray(substitutions) ? substitutions : substitutions === undefined ? [] : [substitutions]).map(String);
     const text = entry.message.replace(/\$([\w@]+)\$/g, (whole, placeholder: string) => entry.placeholders?.[placeholder.toLowerCase()]?.content ?? whole);

@@ -180,7 +180,10 @@ export function createTabs(deps: { gm: Gm; registry: Registry; messaging: Messag
       connect: messaging.tabs.connect,
       create: method(log, create),
       update: method(log, async (...args: unknown[]) => {
-        const [tabId, properties] = typeof args[0] === "number" ? [args[0], args[1] as { url?: string }] : [current(), args[0] as { url?: string }];
+        // update(properties), update(tabId, properties), or update(undefined, properties) for the current tab.
+        const [tabId, properties] = typeof args[0] === "object" && args[0] !== null
+          ? [current(), args[0] as { url?: string }]
+          : [typeof args[0] === "number" ? args[0] : current(), args[1] as { url?: string }];
         if (tabId === undefined) throw new Error("No current tab");
         if (properties?.url) await messaging.control(tabId, "navigate", { url: properties.url });
         return find(tabId);

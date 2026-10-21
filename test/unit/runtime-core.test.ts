@@ -181,6 +181,8 @@ describe("createI18n", () => {
     const i18n = createI18n(config, recorder(), ["fr"]);
     assert.equal(i18n.getMessage("onlyDefault"), "from en");
     assert.equal(i18n.getMessage("missing"), "");
+    assert.equal(i18n.getMessage("constructor"), "");
+    assert.equal(i18n.getMessage("__proto__"), "");
   });
 
   it("substitutes $1–$9 and $$, and accepts a single string substitution", () => {
@@ -223,8 +225,9 @@ describe("createAssets", () => {
     const log = recorder();
     const assets = createAssets(table, "abc", () => "", log);
     assert.equal(assets.url("missing.png"), "chrome-extension://abc/missing.png");
+    assert.equal(assets.url("constructor"), "chrome-extension://abc/constructor");
     assets.url("missing.png");
-    assert.equal(log.lines.length, 1);
+    assert.equal(log.lines.length, 2);
   });
 
   it("decodes a text asset", () => assert.equal(createAssets(table, "id", () => "", recorder()).text("inject.js"), "window.x = 1;"));

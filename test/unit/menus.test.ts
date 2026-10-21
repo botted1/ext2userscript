@@ -86,6 +86,8 @@ describe("context menus", () => {
     const error = await new Promise((resolve) => menus.create({ id: "x", title: "again" }, () => resolve(readLastError()?.message)));
     assert.equal(error, "Cannot create item with duplicate id x");
     await assert.rejects(menus.update("nope", {}) as Promise<unknown>, /Cannot find menu item with id nope/);
+    await assert.rejects(menus.update("y", { parentId: "nope" }) as Promise<unknown>, /Cannot find menu item with id nope/);
+    await assert.rejects(menus.update("x", { parentId: "y" }) as Promise<unknown>, /child of itself or one of its descendants/);
     await menus.remove("x");
     assert.deepEqual((hub.store.get("x2u:t:menus") as { items: unknown[] }).items, []);
     assert.equal((menus.ContextType as unknown as Record<string, string>).SELECTION, "selection");

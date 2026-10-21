@@ -5,7 +5,7 @@ import { startBus } from "../../src/runtime/bus.ts";
 import { createLogger } from "../../src/runtime/chrome.ts";
 import { leaderOf } from "../../src/runtime/elect.ts";
 import { createGm } from "../../src/runtime/gm.ts";
-import { createMessaging } from "../../src/runtime/messaging.ts";
+import { createMessaging, type Messaging } from "../../src/runtime/messaging.ts";
 import { startRegistry, type TabState } from "../../src/runtime/registry.ts";
 import { createTabs } from "../../src/runtime/tabs.ts";
 import { createHub, type Hub } from "../support/gm-hub.ts";
@@ -53,6 +53,18 @@ describe("tabs API", () => {
     assert.deepEqual(matched.map((tab) => tab.id), [2]);
     assert.equal(((await tabs.api.get(2)) as { title: string }).title, "page 2");
     await assert.rejects(tabs.api.get(99) as Promise<unknown>, /No tab with id: 99\./);
+  });
+
+  it("navigates the current tab when update gets no tab id, or an undefined one", async (t) => {
+    const { gm, registry } = await member(t, createHub(), 5, () => tabState(5, { active: true, activeAt: 1 }));
+    const calls: string[] = [];
+    const messaging = { tabs: {}, control: async (id: number, type: string, data: { url: string }) => (calls.push(`${id} ${type} ${data.url}`), null) } as unknown as Messaging;
+    const tabs = createTabs({ gm, registry, messaging, log: createLogger("test"), dispatching: () => false });
+    const update = tabs.api.update as (...args: unknown[]) => Promise<unknown>;
+    await update({ url: "https://a.test/" });
+    await update(undefined, { url: "https://b.test/" });
+    await update(5, { url: "https://c.test/" });
+    assert.deepEqual(calls, ["5 navigate https://a.test/", "5 navigate https://b.test/", "5 navigate https://c.test/"]);
   });
 
   it("fires onCreated, onUpdated, onActivated and onRemoved from registry changes", async (t) => {

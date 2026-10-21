@@ -109,6 +109,15 @@ export async function createMenus(deps: { gm: Gm; ns: string; log: Logger; confi
       const item = find(id);
       if (!item) throw new Error(`Cannot find menu item with id ${String(id)}`);
       const { onclick: handler, id: _id, ...rest } = properties;
+      if (rest.parentId !== undefined) {
+        const parent = find(rest.parentId);
+        if (!parent) throw new Error(`Cannot find menu item with id ${String(rest.parentId)}`);
+        // A cycle would make every tab's menu render walk up its parents forever.
+        for (let at: MenuItem | undefined = parent; at; at = at.parentId === undefined ? undefined : find(at.parentId)) {
+          if (at === item) throw new Error("Cannot set a menu item to be a child of itself or one of its descendants");
+        }
+        rest.parentId = parent.id;
+      }
       Object.assign(item, rest);
       if (handler) onclick.set(item.id, handler);
     });

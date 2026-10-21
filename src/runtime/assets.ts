@@ -24,7 +24,7 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
    * already (as parsed messages), for code that reads its own (Improve YouTube! fetches one, and loops until it loads).
    */
   const lookup = (path: string): { type: string; bytes: Uint8Array<ArrayBuffer> } | undefined => {
-    const entry = table[path];
+    const entry = Object.hasOwn(table, path) ? table[path] : undefined;
     if (entry) return { type: entry[0], bytes: decode(entry[1]) };
     const messages = locales[/^_locales\/([^/]+)\/messages\.json$/.exec(path)?.[1] ?? ""];
     if (!messages) return undefined;
@@ -71,7 +71,7 @@ export function createAssets(table: AssetTable, id: string, getMessage: (name: s
     },
     /** The file as a data: URL, for a consumer outside the page that can't load its blob: URLs (a manager's notification). */
     dataUrl: (path: string) => {
-      const entry = table[toPath(path)];
+      const entry = Object.hasOwn(table, toPath(path)) ? table[toPath(path)] : undefined;
       return entry ? `data:${entry[0]};base64,${entry[1]}` : undefined;
     },
     /** Resolves asset placeholders and __MSG_name__ in extension CSS, as Chrome does. */
