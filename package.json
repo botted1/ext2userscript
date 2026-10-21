@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "description": "Convert browser extensions into userscripts for Tampermonkey and Violentmonkey",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/botted1/ext2userscript.git"
+  },
+  "homepage": "https://botted1.github.io/ext2userscript/",
+  "bugs": "https://github.com/botted1/ext2userscript/issues",
   "type": "module",
   "bin": {
     "ext2userscript": "dist/cli.js"
