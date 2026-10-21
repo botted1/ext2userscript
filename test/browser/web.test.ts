@@ -250,6 +250,7 @@ for (const [name, type] of browsers) {
       assert.equal(await page.locator("#link").isDisabled(), true);
       assert.equal(await page.locator("#store button").isDisabled(), true);
       assert.equal(await page.locator("#store-hint").isVisible(), true);
+      assert.equal(await page.locator("#link").getAttribute("aria-describedby"), "store-hint");
       await page.close();
     });
   });

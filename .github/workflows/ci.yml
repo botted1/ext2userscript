@@ -39,6 +39,10 @@ jobs:
   pages:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # One deploy at a time; a newer push waits rather than racing the one in progress.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read

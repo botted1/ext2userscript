@@ -150,6 +150,7 @@ if (__X2U_PROXY__) {
   // Without a download proxy the field stays, disabled, saying why (spec §8).
   for (const control of store.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true;
   $("store-hint").hidden = false;
+  link.setAttribute("aria-describedby", "store-hint");
 }
 
 $("download").addEventListener("click", () => {
