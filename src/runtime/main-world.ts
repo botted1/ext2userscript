@@ -5,7 +5,7 @@
 // defineProperty turns that script's change to a native prototype's getter, setter or method into one that gives the
 // userscript's own frames what was there before, and every other caller the patch.
 // ponytail: defineProperty on prototypes only; a patch by assignment (XMLHttpRequest.prototype.open = …) or on an
-// instance (document.hidden) still reaches the extension. A shielded member reads a stack per access (about 3 µs, the
+// instance (document.hidden) still reaches the extension. A shielded member reads a stack per access (about 5 µs, the
 // page's accesses too). Diff the prototypes after each MAIN-world group runs if an extension needs more.
 import { frameScript, SINK } from "./trusted.ts";
 
