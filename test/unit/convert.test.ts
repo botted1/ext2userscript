@@ -19,14 +19,14 @@ describe("convert", () => {
     assert.doesNotMatch(header, /@exclude-match/); // only one group excludes it
     assert.match(userscript, /__x2uRuntime\.start\(/);
     assert.match(userscript, /function \(chrome, browser, fetch, XMLHttpRequest\) \{\nreturn function \(\) \{\nif \(!globalThis\.chrome/);
-    assert.match(userscript, /"document\.documentElement\.dataset\.main = String\(window\.pageValue\);"/); // the MAIN group, as text
+    assert.match(userscript, /\{"assets":\["main-world\.js"\]\}/); // the MAIN group, read from the asset table
     assert.doesNotThrow(() => new Function(userscript), "the userscript parses");
   });
 
   it("puts referenced files and web_accessible_resources in the asset table, and nothing else", async () => {
     const { userscript } = await convert(sampleExtension(origin), { runtime });
     const config = JSON.parse(/__x2uRuntime\.start\((\{.*?\}), \[\n/s.exec(userscript)?.[1] ?? "{}");
-    assert.deepEqual(Object.keys(config.assets), ["data/info.json", "img/dot.png", "inject.js"]);
+    assert.deepEqual(Object.keys(config.assets), ["data/info.json", "img/dot.png", "inject.js", "main-world.js"]);
     assert.equal(config.assets["img/dot.png"][0], "image/png");
     assert.deepEqual(config.groups[0].css, ['.x2u-box { color: rgb(1, 2, 3); background-image: url("x2u-asset:img%2Fdot.png"); }']);
     assert.deepEqual(Object.keys(config.locales).sort(), ["en", "fr"]);
@@ -47,7 +47,7 @@ describe("convert", () => {
   it("leaves --ignore-assets files out", async () => {
     const { userscript } = await convert(sampleExtension(origin), { runtime, ignoreAssets: ["data/*", "*.png"] });
     const config = JSON.parse(/__x2uRuntime\.start\((\{.*?\}), \[\n/s.exec(userscript)?.[1] ?? "{}");
-    assert.deepEqual(Object.keys(config.assets), ["inject.js"]);
+    assert.deepEqual(Object.keys(config.assets), ["inject.js", "main-world.js"]);
     assert.deepEqual(config.groups[0].css, [".x2u-box { color: rgb(1, 2, 3); background-image: url(img/dot.png); }"], "an ignored file's url() stays as written");
   });
 
@@ -98,6 +98,33 @@ describe("convert", () => {
     assert.match(await header('chrome.tabs.create({ url: "https://a.test/" });'), /\/\/ @grant {8}GM_openInTab\n/);
     assert.match(await header('chrome.windows.create({ url: "https://a.test/" });'), /\/\/ @grant {8}GM_openInTab\n/);
     assert.doesNotMatch(await header("chrome.tabs.query({});"), /GM_openInTab/);
+  });
+});
+
+describe("output size", () => {
+  it("runs a page-world script that is also web-accessible from the asset table, so it is in the userscript once", async () => {
+    const page = `window.__marker = "page-world-${"x".repeat(40)}";`;
+    const all = files({
+      "manifest.json": JSON.stringify({
+        manifest_version: 3, name: "T", version: "1",
+        content_scripts: [{ matches: ["https://a.test/*"], js: ["page.js"], world: "MAIN" }],
+        web_accessible_resources: [{ resources: ["page.js"], matches: ["<all_urls>"] }],
+      }),
+      "page.js": page,
+    });
+    const { userscript } = await convert(all, { runtime });
+    assert.match(userscript, /\{"assets":\["page\.js"\]\}/);
+    assert.equal(userscript.includes("page-world-"), false, "only as the asset's base64");
+  });
+
+  it("keeps non-ASCII text as it is when minifying", async () => {
+    const all = files({
+      "manifest.json": JSON.stringify({ manifest_version: 3, name: "T", version: "1", content_scripts: [{ matches: ["https://a.test/*"], js: ["c.js"] }] }),
+      "c.js": 'document.title = "héllo ✓";',
+    });
+    const { userscript } = await convert(all, { runtime, esbuild: await loadEsbuild(), minify: true });
+    assert.ok(userscript.includes("héllo ✓"));
+    assert.equal(userscript.includes("\\u00E9") || userscript.includes("\\xE9"), false);
   });
 });
 

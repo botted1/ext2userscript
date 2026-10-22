@@ -32,7 +32,7 @@ export function sampleExtension(origin: string): ExtensionFiles {
       description: "__MSG_extDescription__",
       default_locale: "en",
       icons: { "16": "icons/16.png", "48": "icons/48.png" },
-      web_accessible_resources: [{ resources: ["inject.js", "data/*"], matches: ["<all_urls>"] }],
+      web_accessible_resources: [{ resources: ["inject.js", "data/*", "main-world.js"], matches: ["<all_urls>"] }],
       content_scripts: [
         { matches: [site], exclude_matches: [`${origin}/excluded*`], js: ["lib.js", "content.js"], css: ["style.css"], all_frames: true },
         { matches: [site], js: ["main-world.js"], world: "MAIN", run_at: "document_end" },

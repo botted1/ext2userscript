@@ -93,5 +93,5 @@ The final reviews of Plans 2–7 rated these Minor and left them for later. Tria
 | `@connect` picks up namespace URLs such as `www.w3.org` | Fixed, d0c5910 |
 | `import(x && getURL(…))` is rewritten wrongly, dropping the rest of the expression | Open |
 | A module with remote imports is rebuilt, and warned about, once per call site | Accepted |
-| A content module also in `web_accessible_resources` is embedded twice | Open (for the output-size plan) |
+| A content module also in `web_accessible_resources` is embedded twice | Open: since Plan 10 its asset copy is deflated, and a MAIN-world script in the same position is embedded once |
 | `location.reload()` in the background throws a TypeError rather than a named error | Open (wording) |

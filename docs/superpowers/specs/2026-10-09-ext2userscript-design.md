@@ -167,7 +167,7 @@ Inside that wrapper, code goes in one of two ways.
     - Each module becomes an async function in the group's scope, which closes over its `chrome`, as Chrome runs the module in the content script's world.
     - It runs once per group, with `import.meta.url` `chrome-extension://<id>/<path>`, and resolves to a snapshot of its exports.
     - A module with remote imports isn't bundled, with a warning.
-- **Output:** one string per context. Nothing is minified unless `--minify` is passed, which runs esbuild's minifier over the final file.
+- **Output:** one string per context. Nothing is minified unless `--minify` is passed, which runs esbuild's minifier over the final file with `charset: "utf8"` (its default escapes every non-ASCII character, which can make the output larger).
 
 ### 3.4 Analyze
 - Scan each bundle for member chains rooted at `chrome` or `browser`, such as `chrome.tabs.query`.
@@ -200,9 +200,12 @@ The CLI prints a table and can write `--report report.json`. The web app renders
 ### 3.6 Assets
 - **Collected:** every file referenced from `runtime.getURL` string literals, CSS `url()`, and HTML `src`/`href`/`srcset`, plus all of `web_accessible_resources`. With a background, also the manifest's icons (for notifications), the files it fetches by relative URL, and the style sheets it names (for `insertCSS`). The scripts it names are bundled like content scripts, for `scripting.executeScript({ files })`.
 - **Also collected:** a file the background or a page names by a relative path in a string literal (`"../config/a.config"`, read by XHR), when it exists and isn't code.
-- **Locales:** every `_locales/<locale>/messages.json` goes into the runtime config as parsed JSON, not into the asset table, because `i18n.getMessage` picks the locale in the browser.
+- **Locales:** every `_locales/<locale>/messages.json` goes into the runtime config, not into the asset table, because `i18n.getMessage` picks the locale in the browser. Each one is parsed JSON, or deflated (below) when it is large.
 - **Excluded:** files matching `--ignore-assets <glob,...>`; and source maps (`*.map`) matched by `web_accessible_resources`, with a warning (one named by `getURL` stays).
 - **Stored:** as base64 in an asset table, with the MIME type taken from the extension.
+  - **Deflated:** a file of 1 KB or more is stored as raw DEFLATE, then base64, when that is at least a tenth smaller. The same goes for locales and for content and page CSS in the runtime config. The runtime inflates each one where it is used (fflate's `inflateSync`), and a locale once per page.
+  - **Once:** a MAIN-world group whose files are all in the asset table names them (`{ assets: [paths] }`) instead of carrying its code a second time; the runtime reads their text there.
+  - Measured on the corpus (2026-10-23): userscripts are 23% smaller (113.6 → 87.0 MB; minified 101.5 → 72.2 MB). The runtime grew by 4.3 KB. Inflating BetterTTV's 2.7 MB page script costs about 13 ms per page, about what parsing it as a string costs.
 - **At runtime:**
   - `runtime.getURL(path)` returns `blob:<…>#<path>`. Each URL is created lazily and cached per path. The fragment changes no load, and code that reads the URL's text (`.indexOf('.css')`) sees the path, as in Chrome. SVG, audio, video and PDF files get a bare `blob:` URL, because their code adds a fragment of its own (`#icon`, `#t=10`, `#page=2`).
   - `_locales/<locale>/messages.json` is served from the runtime config, rebuilt with its names as the file wrote them.

@@ -14,13 +14,16 @@ import { trustExtensionStrings } from "./trusted.ts";
 
 type Deps = { gm: Gm; chrome: object; assets: Assets; log: Logger; network: Network };
 
+/** MAIN-world code: source text, or the asset-table files it is made of. */
+const isMain = (c: GroupCode | undefined): c is string | { assets: string[] } => typeof c === "string" || (typeof c === "object" && c !== null);
+
 export function runContent(config: RuntimeConfig, code: readonly GroupCode[], deps: Deps): void {
   const inFrame = window.top !== window;
   const groups = config.groups
     .map((group, index) => ({ group, index, code: code[index] }))
     .filter(({ group }) => (!inFrame || group.allFrames) && filterMatches(location.href, group));
   if (groups.length === 0) return;
-  if (groups.some(({ code: c }) => typeof c === "string")) shieldFromMainWorld(config.id);
+  if (groups.some(({ code: c }) => isMain(c))) shieldFromMainWorld(config.id);
   if (groups.some(({ code: c }) => typeof c === "function")) {
     trustExtensionStrings();
     interceptAssetScripts(deps);
@@ -37,8 +40,9 @@ export function runContent(config: RuntimeConfig, code: readonly GroupCode[], de
     if (c === null || c === undefined) continue;
     const run = () => {
       try {
-        if (typeof c === "string") {
-          const textContent = `${c}\n//# sourceURL=${mainScriptName(config.id, index)}`;
+        if (isMain(c)) {
+          const source = typeof c === "string" ? c : c.assets.map((path) => deps.assets.text(path) ?? "").join("\n;\n");
+          const textContent = `${source}\n//# sourceURL=${mainScriptName(config.id, index)}`;
           deps.gm.addElement(root(), "script", { textContent }).catch((error: unknown) => deps.log.error(error));
         } else withGlobals(deps.chrome, c(deps.chrome, deps.chrome, deps.network.fetch, deps.network.XMLHttpRequest));
       } catch (error) {
@@ -46,7 +50,7 @@ export function runContent(config: RuntimeConfig, code: readonly GroupCode[], de
       }
     };
     // MAIN-world code needs an element to go into; isolated-world code at document_start runs at once, as in Chrome.
-    if (group.runAt === "document_start") (typeof c === "string" ? whenRoot : (fn: () => void) => fn())(run);
+    if (group.runAt === "document_start") (isMain(c) ? whenRoot : (fn: () => void) => fn())(run);
     else whenParsed(group.runAt, run);
   }
 }

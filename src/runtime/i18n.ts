@@ -1,6 +1,7 @@
 // chrome.i18n (spec §5.2): messages from the extension's _locales, in the locale chosen from the browser's languages
 // (or forced with --locale), falling back to default_locale. pickLocale is shared with manifest.ts.
 import { method, type Logger } from "./chrome.ts";
+import { messagesOf } from "./assets.ts";
 import type { RuntimeConfig } from "./config.ts";
 
 const normalize = (locale: string) => locale.replace(/-/g, "_").toLowerCase();
@@ -23,7 +24,7 @@ export function createI18n(
   languages: readonly string[] = navigator.languages,
 ) {
   const chosen = config.locale ?? pickLocale(Object.keys(config.locales), languages, config.defaultLocale);
-  const tables = [...new Set([chosen, config.defaultLocale])].flatMap((locale) => (locale && config.locales[locale] ? [config.locales[locale]] : []));
+  const tables = [...new Set([chosen, config.defaultLocale])].flatMap((locale) => (locale && Object.hasOwn(config.locales, locale) ? [messagesOf(config.locales[locale])] : []));
   const rtl = RTL.test(chosen ?? "");
   const predefined: Record<string, string> = {
     "@@extension_id": config.id,

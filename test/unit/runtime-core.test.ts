@@ -5,6 +5,7 @@ import { backgroundChrome, backgroundLocation } from "../../src/runtime/backgrou
 import { callWithLastError, createEvent, createLogger, method, readLastError, withFallback, type Logger } from "../../src/runtime/chrome.ts";
 import { withGlobals } from "../../src/runtime/content.ts";
 import { createI18n, pickLocale } from "../../src/runtime/i18n.ts";
+import { packFile, packJson, packText } from "../../src/convert/files.ts";
 import { frameScript } from "../../src/runtime/trusted.ts";
 
 /** A logger that records what it would print. */
@@ -172,6 +173,16 @@ describe("createI18n", () => {
     },
   };
 
+  it("reads deflated locales, for messages and for code that fetches messages.json", () => {
+    const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`m${i}`, { message: `Message number ${i}` }]));
+    const packed = { ...config, locales: { en: packJson({ ...config.locales.en, ...many }), fr: config.locales.fr } };
+    assert.notEqual(packed.locales.en, config.locales.en, "deflated");
+    const i18n = createI18n(packed, recorder(), ["en"]);
+    assert.equal(i18n.getMessage("m79"), "Message number 79");
+    const assets = createAssets({}, "id", i18n.getMessage, recorder(), packed.locales);
+    assert.equal(JSON.parse(assets.text("_locales/en/messages.json") ?? "{}").m3.message, "Message number 3");
+  });
+
   it("picks the browser's language and fills placeholders and substitutions", () => {
     const i18n = createI18n(config, recorder(), ["fr-FR", "en"]);
     assert.equal(i18n.getMessage("Greeting", ["x2u"]), "Bonjour x2u");
@@ -228,6 +239,26 @@ describe("createAssets", () => {
     assert.equal(assets.url("constructor"), "chrome-extension://abc/constructor");
     assets.url("missing.png");
     assert.equal(log.lines.length, 2);
+  });
+
+  it("hands out deflated files, their data: URLs and deflated CSS as the extension's own bytes", async () => {
+    const text = `${"window.x = 1;\n".repeat(400)}// é ✓`;
+    const css = "a { color: red }\n".repeat(200);
+    const table = { "big.js": packFile("text/javascript", new TextEncoder().encode(text)), "tiny.txt": packFile("text/plain", new TextEncoder().encode("hi")) };
+    assert.equal(table["big.js"][2], 1, "deflated");
+    assert.equal(table["tiny.txt"].length, 2, "under 1 KB, as it is");
+    const assets = createAssets(table, "id", () => "", recorder());
+    assert.equal(assets.text("big.js"), text);
+    assert.equal(await fetch(assets.url("big.js")).then((response) => response.text()), text);
+    const base64 = (assets.dataUrl("big.js") ?? "").split(",")[1];
+    assert.equal(new TextDecoder().decode(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))), text);
+    assert.notEqual(typeof packText(css), "string");
+    assert.equal(assets.css(packText(css)), css);
+  });
+
+  it("leaves a file as it is when deflating saves too little", () => {
+    const noise = crypto.getRandomValues(new Uint8Array(4096));
+    assert.equal(packFile("image/png", noise).length, 2);
   });
 
   it("decodes a text asset", () => assert.equal(createAssets(table, "id", () => "", recorder()).text("inject.js"), "window.x = 1;"));

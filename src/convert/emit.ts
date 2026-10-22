@@ -24,17 +24,21 @@ function withExports(background: BackgroundBundle): string {
 
 const factory = (code: string) => `function (chrome, browser, fetch, XMLHttpRequest) {\nreturn function () {\n${code}\n};\n}`;
 
+/** A group's code, or for a page-world group whose files are all in the asset table, their paths (the runtime reads them there). */
+export type EmitCode = ContentCode | { world: "MAIN"; assets: string[] };
+
 export function emit(
   header: string,
   runtime: string,
   config: RuntimeConfig,
-  code: readonly ContentCode[],
+  code: readonly EmitCode[],
   background: BackgroundBundle | null = null,
   injectables: Readonly<Record<string, string>> = {},
   pages: Readonly<Partial<Record<PageKind, string>>> = {},
 ): string {
   const groups = code.map((group) => {
     if (group === null) return "null";
+    if ("assets" in group) return JSON.stringify({ assets: group.assets });
     if (group.world === "MAIN") return JSON.stringify(group.code);
     return factory(group.code);
   });

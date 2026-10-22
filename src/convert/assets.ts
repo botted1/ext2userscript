@@ -5,7 +5,7 @@
 // Locales don't go here: every messages.json is in the runtime config already, as parsed JSON.
 import { ASSET_PREFIX } from "../runtime/assets.ts";
 import type { AssetTable } from "../runtime/config.ts";
-import { decodeText, mimeOf, toBase64 } from "./files.ts";
+import { decodeText, mimeOf, packFile } from "./files.ts";
 import type { Model } from "./manifest.ts";
 import { dirname, joinPath } from "./paths.ts";
 import type { ExtensionFiles } from "./unpack.ts";
@@ -73,7 +73,7 @@ export function collectAssets(model: Model, files: ExtensionFiles, getUrls: read
   );
 
   const table: AssetTable = {};
-  for (const path of [...wanted].sort()) table[path] = [mimeOf(path), toBase64(files.get(path) as Uint8Array)];
+  for (const path of [...wanted].sort()) table[path] = packFile(mimeOf(path), files.get(path) as Uint8Array);
   return { table, css, warnings };
 }
 

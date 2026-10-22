@@ -8,6 +8,9 @@ export type Message = { name?: string; message: string; placeholders?: Record<st
 /** One locale's messages.json. Message and placeholder names are lower-cased, because Chrome ignores their case. */
 export type Messages = Record<string, Message>;
 
+/** Text the converter deflated because that made it smaller: raw DEFLATE, then base64 (see src/runtime/assets.ts). */
+export type Deflated = { deflated: string };
+
 /** Which URLs a content-script group runs on (Chrome's matches, exclude_matches, include_globs, exclude_globs). */
 export type UrlFilter = { matches: string[]; excludeMatches: string[]; includeGlobs: string[]; excludeGlobs: string[] };
 
@@ -16,11 +19,11 @@ export type GroupConfig = UrlFilter & {
   allFrames: boolean;
   world: World;
   /** The group's CSS files, in order, with asset URLs replaced by placeholders (see src/runtime/assets.ts). */
-  css: string[];
+  css: Array<string | Deflated>;
 };
 
-/** Extension files the runtime can hand out as blob: URLs, by path: [MIME type, base64 bytes]. */
-export type AssetTable = Record<string, [mime: string, base64: string]>;
+/** Extension files the runtime can hand out as blob: URLs, by path: [MIME type, base64 bytes, 1 if the bytes are deflated]. */
+export type AssetTable = Record<string, [mime: string, base64: string, deflated?: 1]>;
 
 export type RuntimeConfig = {
   /** The extension's name, for log prefixes. */
@@ -34,7 +37,7 @@ export type RuntimeConfig = {
   groups: GroupConfig[];
   assets: AssetTable;
   /** Every locale's messages, keyed by the _locales folder name. */
-  locales: Record<string, Messages>;
+  locales: Record<string, Messages | Deflated>;
   defaultLocale?: string;
   /** Set by --locale: i18n uses this locale instead of the browser's languages. */
   locale?: string;
@@ -65,7 +68,7 @@ export type PageConfig = {
   head: PageNode[];
   body: PageNode[];
   /** The page's style sheets in document order, with asset placeholders. */
-  css: string[];
+  css: Array<string | Deflated>;
 };
 
 /**
@@ -117,10 +120,10 @@ export type PageCode = (
 
 /**
  * One entry per content group, in manifest order: isolated-world code as a factory that takes the chrome and browser
- * objects and the network shim's fetch and XMLHttpRequest and returns the code to run, MAIN-world code as source text,
- * or null for a group without JS.
+ * objects and the network shim's fetch and XMLHttpRequest and returns the code to run, MAIN-world code as source text
+ * (or as the asset-table files it is made of, when they are all there), or null for a group without JS.
  */
-export type GroupCode = ((chrome: unknown, browser: unknown, fetch: unknown, XMLHttpRequest: unknown) => () => void) | string | null;
+export type GroupCode = ((chrome: unknown, browser: unknown, fetch: unknown, XMLHttpRequest: unknown) => () => void) | string | { assets: string[] } | null;
 
 /** Extension files the background may inject with scripting.executeScript({ files }), by path, as content-script factories. */
 export type InjectableCode = Record<string, (chrome: unknown, browser: unknown, fetch: unknown, XMLHttpRequest: unknown) => () => void>;
